@@ -97,6 +97,7 @@ jobs:
             build/monorepo-*/*.log
             build/monorepo-*/images/*.oci.tar
           compression-level: 0
+          overwrite: true
           retention-days: 14
           if-no-files-found: error
   publish:
@@ -138,6 +139,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: neon-publication-${{ github.sha }}
+          overwrite: true
           path: |
             build/published-release/release-manifest.json
             build/published-release/SHA256SUMS

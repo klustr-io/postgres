@@ -46,6 +46,13 @@ sha256sum --check --ignore-missing SHA256SUMS
 docker load --input compute.oci.tar
 ```
 
+If organization policy keeps GHCR private, authenticate with `docker login ghcr.io`
+using an organization-authorized `read:packages` credential. Kubernetes deployments
+need a registry pull Secret on the `default` and `neon-tenant-controller` service
+accounts in their namespace. Keep credentials in Secrets, outside source control.
+An organization owner can review the Public package-creation setting under
+[organization package settings](https://github.com/organizations/klustr-io/settings/packages).
+
 ## Build and update
 
 Node 24.19+, Docker 29 with its containerd image store, and Docker Buildx are required.
@@ -63,6 +70,8 @@ Pull requests run focused checks without publishing. Pushes to `REL_18_STABLE_ne
 and `main` build and publish commit-tagged images. A tag such as
 `neon-v18.6-rc.4` also creates a GitHub prerelease with public OCI assets and notes.
 Manual runs build without publishing unless the publishing input is selected.
+GitHub's manual-dispatch UI requires the workflow on the repository's default
+branch; tagged releases work from the release branch before that merge.
 Build jobs have read-only repository permissions; registry/release credentials
 are limited to the separate publication job.
 
