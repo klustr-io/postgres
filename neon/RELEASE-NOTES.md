@@ -22,8 +22,10 @@
   isolation and production HA/RPO qualification remain open. Existing native-PG
   performance measurements are unchanged; near-native throughput is not certified.
 
-These changes require a new controller image; the published RC4 controller does
-not contain them. Storage/compute manifests pin the existing RC4 digests.
+The updated controller is published under source tag
+`sha-7f4761771ea56d95bb815d96778c0d1a78f9a820` and pinned by digest in deployment
+YAML. The RC4 controller does not contain these changes. Storage/compute manifests
+pin the existing RC4 digests.
 
 # Neon PostgreSQL 18.6 — 18.6-rc.4
 

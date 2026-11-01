@@ -12,7 +12,10 @@ Kubernetes tenant/compute controller. The current release candidate is
 
 ## Published images
 
-GitHub Actions builds these images from the tagged source and publishes them to GHCR:
+GitHub Actions builds these images from the tagged source and publishes them to GHCR.
+The [controller workflow](https://github.com/klustr-io/postgres/actions/workflows/neon-controller.yml)
+also publishes source-tagged controller updates independently; deployment YAML pins
+the newer KEDA controller described in [DEPLOY.md](DEPLOY.md).
 
 | Component | Registry repository |
 |---|---|

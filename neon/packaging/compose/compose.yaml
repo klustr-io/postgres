@@ -14,10 +14,7 @@ services:
       - backend
     tmpfs:
       - /tmp:uid=10001,gid=10001,mode=1770,size=256m
-    image: klustr-neon-tenant-controller:deploy
-    build:
-      context: ../../..
-      dockerfile: neon/packaging/docker/neon/runtime/Dockerfile.tenant-controller
+    image: ${NEON_CONTROLLER_IMAGE:-ghcr.io/klustr-io/neon-tenant-controller@sha256:fe71ce0d74172f1c10b612930822ad2f86575cef9fc96f58ffdc230be94ba246}
     entrypoint:
       - /usr/local/bin/node
     volumes:
@@ -316,10 +313,7 @@ services:
       - backend
     tmpfs:
       - /tmp:uid=10001,gid=10001,mode=1770,size=256m
-    image: klustr-neon-tenant-controller:deploy
-    build:
-      context: ../../..
-      dockerfile: neon/packaging/docker/neon/runtime/Dockerfile.tenant-controller
+    image: ${NEON_CONTROLLER_IMAGE:-ghcr.io/klustr-io/neon-tenant-controller@sha256:fe71ce0d74172f1c10b612930822ad2f86575cef9fc96f58ffdc230be94ba246}
     entrypoint:
       - /usr/local/bin/node
     volumes:
@@ -354,10 +348,7 @@ services:
           - neon-controller
     tmpfs:
       - /tmp:uid=10001,gid=10001,mode=1770,size=256m
-    image: klustr-neon-tenant-controller:deploy
-    build:
-      context: ../../..
-      dockerfile: neon/packaging/docker/neon/runtime/Dockerfile.tenant-controller
+    image: ${NEON_CONTROLLER_IMAGE:-ghcr.io/klustr-io/neon-tenant-controller@sha256:fe71ce0d74172f1c10b612930822ad2f86575cef9fc96f58ffdc230be94ba246}
     entrypoint:
       - /usr/local/bin/node
     volumes:

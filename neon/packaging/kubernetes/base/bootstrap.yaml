@@ -55,7 +55,7 @@ items:
               type: RuntimeDefault
           containers:
             - name: init
-              image: klustr-neon-tenant-controller:deploy
+              image: ghcr.io/klustr-io/neon-tenant-controller@sha256:fe71ce0d74172f1c10b612930822ad2f86575cef9fc96f58ffdc230be94ba246
               imagePullPolicy: IfNotPresent
               command:
                 - /usr/local/bin/node
@@ -123,7 +123,7 @@ items:
               type: RuntimeDefault
           containers:
             - name: provision
-              image: klustr-neon-tenant-controller:deploy
+              image: ghcr.io/klustr-io/neon-tenant-controller@sha256:fe71ce0d74172f1c10b612930822ad2f86575cef9fc96f58ffdc230be94ba246
               imagePullPolicy: IfNotPresent
               command:
                 - /usr/local/bin/node

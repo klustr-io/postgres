@@ -5,9 +5,10 @@ architecture. The Kubernetes KEDA path supports declarative database provisionin
 size/tier changes, demand webhooks, compute suspension and shared-storage suspension.
 Applications use normal PostgreSQL connections, SQL and JSONB.
 
-**These changes are newer than RC4.** Build the controller from this checkout;
-the published RC4 controller does not contain them. Runtime images are pinned to
-RC4 digests. This is an integration candidate, not a production HA certification.
+**These changes are newer than RC4.** Deployment YAML pins the updated public
+controller image built from commit `7f4761771ea56d95bb815d96778c0d1a78f9a820`;
+other runtime images are pinned to RC4 digests. This is an integration candidate,
+not a production HA certification. [Controller build and publication](https://github.com/klustr-io/postgres/actions/runs/41303236063).
 
 ## Idle boundary and cost
 
@@ -38,7 +39,9 @@ rebinding to replacement nodes remains a production integration gate. Local-path
 volumes and a single local Kubernetes worker do not qualify node-loss recovery.
 
 Shared storage remains up while any database needs it. An always-on database keeps
-its shared fleet up. The default fleet cooldown adds 30 seconds after database
+its shared fleet up. A project hostname does not allocate a separate fleet;
+independent project or tenant storage shutdown requires separate deployments/fleets.
+The default fleet cooldown adds 30 seconds after database
 demand ceases, and shutdown waits for S3 durability. Cold fleet startup is slower
 than compute-only wake; there is no certified subsecond wake SLA.
 One local integration wake from fully stopped database/storage workers to JSONB
@@ -66,15 +69,8 @@ PostgreSQL, storage controller, proxy, lifecycle controller and bootstrap creden
    of [`base/storage.yaml`](neon/packaging/kubernetes/base/storage.yaml). Default
    volumes request 10Gi each. Production node removal requires durable CSI volumes;
    S3 alone does not preserve the separate controller metadata PostgreSQL database.
-3. Build and publish the updated controller. Other component images are already public:
-
-```sh
-docker build -f neon/packaging/docker/neon/runtime/Dockerfile.tenant-controller -t YOUR_REGISTRY/neon-tenant-controller:deploy .
-docker push YOUR_REGISTRY/neon-tenant-controller:deploy
-```
-
-Replace `klustr-neon-tenant-controller:deploy` with your repository/digest using a
-Kustomize `images` entry. A local kind cluster can import the image instead.
+3. The controller and runtime images are public and digest-pinned in the YAML.
+   Use a Kustomize `images` entry if mirroring them into your own registry.
 
 Install KEDA once per platform, using your approved installation or the pinned
 release below. This installs cluster-scoped CRDs/RBAC and needs cluster-admin:
@@ -248,11 +244,11 @@ Client CIDRs inherit the provider's `clientCIDRs` unless explicitly overridden.
 ```sh
 cp neon/packaging/compose/.env.example neon/packaging/compose/.env
 # Edit .env with S3 credentials and config/cluster.yaml with storage/tenant settings.
-docker compose --env-file neon/packaging/compose/.env -f neon/packaging/compose/compose.yaml --profile pull pull --ignore-buildable
-docker compose --env-file neon/packaging/compose/.env -f neon/packaging/compose/compose.yaml up -d --build
+docker compose --env-file neon/packaging/compose/.env -f neon/packaging/compose/compose.yaml --profile pull pull
+docker compose --env-file neon/packaging/compose/.env -f neon/packaging/compose/compose.yaml up -d
 ```
 
-The small helper image builds locally; PostgreSQL/Rust services use existing public
+The controller and PostgreSQL/Rust services use digest-pinned public
 images. Compose needs Docker 29/Compose v2 on AMD64. `name` in cluster configuration
 must match `COMPOSE_PROJECT_NAME` (default `neon`). Port defaults to loopback 55432.
 Set `DOCKER_GID` to the Docker socket group on Linux. The controller's socket access

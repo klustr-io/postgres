@@ -13,7 +13,7 @@ const digests = {compute: 'c7d0b5e0a359941fb766253bd8e2b0f8fe6408a6fa855ebf02870
   'storage-broker': 'c66d30b177d651148d2c70e52c9e974a289dca236aa8cfa33896a8ed6cf55208',
   proxy: '562852b3eecd2726fcdf05d592e5d6692f7cff1c9434c2db2509a29559d49dd5'};
 const image = role => `ghcr.io/klustr-io/neon-${role}@sha256:${digests[role]}`;
-const helper = 'klustr-neon-tenant-controller:deploy';
+const helper = 'ghcr.io/klustr-io/neon-tenant-controller@sha256:fe71ce0d74172f1c10b612930822ad2f86575cef9fc96f58ffdc230be94ba246';
 const shell = command => ['/bin/sh', '-ec', command];
 const pageserver = 'cat /run/neon/pageserver.toml > /var/lib/neon/pageserver.toml; printf "id=1\\n" > /var/lib/neon/identity.toml; export NEON_AUTH_TOKEN="$(cat /run/neon/safekeeper.jwt)"; exec /usr/local/bin/pageserver -D /var/lib/neon';
 const metadataCommand = 'if [ ! -f /var/lib/neon/metadata/PG_VERSION ]; then /opt/postgres/v18/bin/initdb -D /var/lib/neon/metadata -U neon --pwfile=/run/metadata/password --auth-host=scram-sha-256; fi; printf "local all all trust\n host postgres neon 0.0.0.0/0 scram-sha-256\n host postgres neon ::/0 scram-sha-256\n" > /var/lib/neon/metadata/pg_hba.conf; exec /opt/postgres/v18/bin/postgres -D /var/lib/neon/metadata -c listen_addresses=* -p 5432';
@@ -40,7 +40,7 @@ const s3env = {AWS_ACCESS_KEY_ID: '${AWS_ACCESS_KEY_ID:?Set AWS_ACCESS_KEY_ID}',
   AWS_REGION: '${AWS_REGION:-us-east-1}', AWS_EC2_METADATA_DISABLED: 'true'};
 const initDepends = {init: {condition: 'service_completed_successfully'}};
 const stateMount = (subpath, target = '/run/neon') => ({type: 'volume', source: 'state', target, read_only: true, volume: {subpath}});
-const helperService = {...shared, image: helper, build: {context: '../../..', dockerfile: 'neon/packaging/docker/neon/runtime/Dockerfile.tenant-controller'},
+const helperService = {...shared, image: '${NEON_CONTROLLER_IMAGE:-' + helper + '}',
   entrypoint: ['/usr/local/bin/node'], volumes: ['state:/state', configMount]};
 const compose = {name: 'neon', services: {
   init: {...helperService, user: '0:0', restart: 'no', cap_add: ['CHOWN', 'FOWNER', 'DAC_OVERRIDE'], command: ['/app/deploy/bootstrap.mjs', 'init']},
@@ -73,7 +73,7 @@ const compose = {name: 'neon', services: {
 }, networks: {backend: {name: '${COMPOSE_PROJECT_NAME:-neon}-backend'}}, volumes: Object.fromEntries(['state', 'metadata', 'pageserver', 'pageserver-2', 'safekeeper-1', 'safekeeper-2', 'safekeeper-3'].map(name => [name, {name: '${COMPOSE_PROJECT_NAME:-neon}-' + name}]))};
 output('../compose/compose.yaml', compose);
 output('../compose/config/cluster.yaml', cluster);
-fs.writeFileSync(path.resolve(root, '../compose/.env.example'), 'AWS_ACCESS_KEY_ID=replace-me\nAWS_SECRET_ACCESS_KEY=replace-me\nAWS_REGION=us-east-1\nNEON_PORT=55432\n# Linux: use the group owning /var/run/docker.sock\nDOCKER_GID=0\n');
+fs.writeFileSync(path.resolve(root, '../compose/.env.example'), 'AWS_ACCESS_KEY_ID=replace-me\nAWS_SECRET_ACCESS_KEY=replace-me\nAWS_REGION=us-east-1\nNEON_PORT=55432\n# Linux: use the group owning /var/run/docker.sock\nDOCKER_GID=0\n# Optional controller image override\n# NEON_CONTROLLER_IMAGE=your-registry/neon-tenant-controller:deploy\n');
 
 const ns = 'neon';
 const metadata = name => ({name});
