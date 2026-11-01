@@ -1,23 +1,20 @@
 # Current candidate: PostgreSQL 18.6 / AMD64
 
-The current working branch additionally contains unreleased KEDA/database/fleet
-lifecycle support. See [DEPLOY.md](../../../DEPLOY.md) for its scope and build
-requirements; these changes are not included in the RC4 controller image below.
+`18.6-rc.5` includes KEDA/database/fleet lifecycle support, explicit suspend and
+guarded deletion, native snapshots with retention, and cloning/PITR to new branches.
+See [DEPLOY.md](../../../DEPLOY.md) for deployment instructions and scope.
 
-`18.6-rc.4` is the first single-checkout GitHub publication candidate. The engine,
-Neon runtime, extensions and tenant controller build directly from checked-in
-source. Applications retain standard PostgreSQL SQL and JSONB.
+The [GitHub workflow](https://github.com/klustr-io/postgres/actions/workflows/neon-pg18-candidate.yml)
+builds all seven images from tag `neon-v18.6-rc.5`. Successful publication produces
+[release assets](https://github.com/klustr-io/postgres/releases/tag/neon-v18.6-rc.5),
+OCI archives, SHA-256 checksums and digest-pinned GHCR references. Consult the run
+and release manifest for build/publication status; preparing the tag alone is not
+proof of successful publication.
 
-[Workflow](https://github.com/klustr-io/postgres/actions/workflows/neon-pg18-candidate.yml)
-and [release assets](https://github.com/klustr-io/postgres/releases/tag/neon-v18.6-rc.4)
-provide the build result, seven OCI archives, SHA-256 checksums and digest-pinned
-GHCR references. Each image includes the source commit revision. GHCR anonymous
-pull verification is recorded separately from archive publication.
-
-The preceding local source build passed all 231 standard PostgreSQL regressions,
-four protocol authentication tests, 15 focused Node checks and executable smoke
-for all seven images. Its compilation used a freshly built dependency toolchain.
-That evidence does not substitute for the current GitHub run or certify production HA.
+Basic local recovery integration passed snapshot creation, suspend/resume and
+clone readback: the restored JSONB document held version 1 while its source held
+version 2. The focused controller suite has 29 checks. These results do not certify
+scheduled expiry, production HA/RPO, independent DR or near-native performance.
 
 ## Measured performance limits
 
@@ -30,7 +27,7 @@ and asynchronous native PG 25,734. With eight additional storage CPUs Neon reach
 Fast Neon therefore reached approximately 36% of comparably asynchronous native
 PostgreSQL throughput; the 85% goal is not met. Different failure topologies,
 flush policies and brief shared-host timing windows limit this comparison.
-No new performance claim is made for RC4.
+No new performance claim is made for RC5.
 
 ## Remaining production gates
 
@@ -42,5 +39,5 @@ No new performance claim is made for RC4.
 The current controller implements configurable idle/never policies, writer
 reservations, admission closure, quorum drain and wake routing. It pins writers
 to a worker and does not automatically migrate a potentially live writer after a
-partition. Provisioned storage and administrator-provided ComputeSpecs/Secrets
-are prerequisites. Page checksums remain unsupported by Neon page reconstruction.
+partition. The Kubernetes deployment provisions storage and continuously reconciles database
+resources; provider S3/CSI configuration remains required. Page checksums remain unsupported by Neon page reconstruction.
