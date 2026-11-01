@@ -1,0 +1,9 @@
+{
+  "name": "klustr-neon-tenant-compute-controller",
+  "version": "0.1.0-rc.1",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=24.19.0 <25"},
+  "dependencies": {"pg": "8.23.1"},
+  "scripts": {"start": "node server.mjs"}
+}
