@@ -1,0 +1,9 @@
+Neon
+Copyright 2022 - 2024 Neon Inc.
+
+The PostgreSQL submodules in vendor/ are licensed under the PostgreSQL license.
+See vendor/postgres-vX/COPYRIGHT for details.
+
+This directory adapts pgxn/neon_rmgr from neondatabase/neon commit
+fa504217c61bbcaf5c512d75830564541f917f8f for standalone PostgreSQL 18.
+Modifications by Klustr are described in the source headers and README.

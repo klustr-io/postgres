@@ -420,11 +420,9 @@ pgaio_io_resowner_register(PgAioHandle *ioh, struct ResourceOwnerData *resowner)
  *
  * Should only be called from pgaio_io_start_*().
  */
-void
-pgaio_io_stage(PgAioHandle *ioh, PgAioOp op)
+static void
+pgaio_io_define(PgAioHandle *ioh, PgAioOp op)
 {
-	bool		needs_synchronous;
-
 	Assert(ioh->state == PGAIO_HS_HANDED_OUT);
 	Assert(pgaio_my_backend->handed_out_io == ioh);
 	Assert(pgaio_io_has_target(ioh));
@@ -447,6 +445,54 @@ pgaio_io_stage(PgAioHandle *ioh, PgAioOp op)
 	pgaio_io_call_stage(ioh);
 
 	pgaio_io_update_state(ioh, PGAIO_HS_STAGED);
+
+	RESUME_INTERRUPTS();
+}
+
+/*
+ * NEON: Finish a read that a non-file storage manager performed synchronously.
+ *
+ * The caller must set the target, fill every requested buffer, and then call
+ * this function with the number of blocks read. Errors must be raised before
+ * this call, while the backend still owns the IO and buffer pins. In particular,
+ * network operations must not run in a critical section or after the stage
+ * callbacks transfer ownership of the buffers to AIO.
+ *
+ * There is no file descriptor to submit to a worker or io_uring. Nevertheless,
+ * run the usual stage and completion callbacks, including page verification,
+ * buffer pin transfer, and wait-reference completion. The storage-manager API
+ * reports blocks, so there must be no MD byte-to-block conversion callback.
+ */
+void
+pgaio_io_complete_readv(PgAioHandle *ioh, int nblocks)
+{
+	Assert(nblocks > 0);
+	Assert(ioh->op == PGAIO_OP_INVALID);
+	Assert(ioh->target == PGAIO_TID_SMGR);
+	Assert(nblocks == ioh->target_data.smgr.nblocks);
+	Assert(!INTERRUPTS_CAN_BE_PROCESSED());
+
+	pgaio_io_set_flag(ioh, PGAIO_HF_SYNCHRONOUS);
+	ioh->op_data.read.fd = -1;
+	ioh->op_data.read.offset = 0;
+	ioh->op_data.read.iov_length = 0;
+
+	HOLD_INTERRUPTS();
+	pgaio_io_define(ioh, PGAIO_OP_READV);
+	pgaio_io_prepare_submit(ioh);
+	START_CRIT_SECTION();
+	pgaio_io_process_completion(ioh, nblocks);
+	END_CRIT_SECTION();
+	RESUME_INTERRUPTS();
+}
+
+void
+pgaio_io_stage(PgAioHandle *ioh, PgAioOp op)
+{
+	bool		needs_synchronous;
+
+	HOLD_INTERRUPTS();
+	pgaio_io_define(ioh, op);
 
 	/*
 	 * Synchronous execution has to be executed, well, synchronously, so check

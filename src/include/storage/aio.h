@@ -298,6 +298,8 @@ extern PgAioOpData *pgaio_io_get_op_data(PgAioHandle *ioh);
 
 extern void pgaio_io_start_readv(PgAioHandle *ioh,
 								 int fd, int iovcnt, uint64 offset);
+/* NEON: complete a synchronous read performed by a non-file storage manager. */
+extern void pgaio_io_complete_readv(PgAioHandle *ioh, int nblocks);
 extern void pgaio_io_start_writev(PgAioHandle *ioh,
 								  int fd, int iovcnt, uint64 offset);
 

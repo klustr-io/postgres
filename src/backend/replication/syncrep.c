@@ -88,6 +88,7 @@
 
 /* User-settable parameters for sync rep */
 char	   *SyncRepStandbyNames;
+SyncRepCommitGuard_hook_type SyncRepCommitGuard_hook = NULL;
 
 #define SyncStandbysDefined() \
 	(SyncRepStandbyNames != NULL && SyncRepStandbyNames[0] != '\0')
@@ -155,6 +156,9 @@ SyncRepWaitForLSN(XLogRecPtr lsn, bool commit)
 	 * influenced by external interruptions.
 	 */
 	Assert(InterruptHoldoffCount > 0);
+
+	if (SyncRepCommitGuard_hook)
+		SyncRepCommitGuard_hook(lsn, commit);
 
 	/*
 	 * Fast exit if user has not requested sync replication, or there are no
@@ -1078,6 +1082,7 @@ check_synchronous_standby_names(char **newval, void **extra, GucSource source)
 			if (syncrep_parse_error_msg)
 				GUC_check_errdetail("%s", syncrep_parse_error_msg);
 			else
+				/* translator: %s is a GUC name */
 				GUC_check_errdetail("\"%s\" parser failed.",
 									"synchronous_standby_names");
 			return false;

@@ -30,7 +30,6 @@ hash_xlog_init_meta_page(XLogReaderState *record)
 	XLogRecPtr	lsn = record->EndRecPtr;
 	Page		page;
 	Buffer		metabuf;
-	ForkNumber	forknum;
 
 	xl_hash_init_meta_page *xlrec = (xl_hash_init_meta_page *) XLogRecGetData(record);
 
@@ -42,16 +41,7 @@ hash_xlog_init_meta_page(XLogReaderState *record)
 	page = (Page) BufferGetPage(metabuf);
 	PageSetLSN(page, lsn);
 	MarkBufferDirty(metabuf);
-
-	/*
-	 * Force the on-disk state of init forks to always be in sync with the
-	 * state in shared buffers.  See XLogReadBufferForRedoExtended.  We need
-	 * special handling for init forks as create index operations don't log a
-	 * full page image of the metapage.
-	 */
-	XLogRecGetBlockTag(record, 0, NULL, &forknum, NULL);
-	if (forknum == INIT_FORKNUM && !am_wal_redo_postgres)
-		FlushOneBuffer(metabuf);
+	XLogFlushBufferForRedoIfInit(record, 0, metabuf);
 
 	/* all done */
 	UnlockReleaseBuffer(metabuf);
@@ -69,7 +59,6 @@ hash_xlog_init_bitmap_page(XLogReaderState *record)
 	Page		page;
 	HashMetaPage metap;
 	uint32		num_buckets;
-	ForkNumber	forknum;
 
 	xl_hash_init_bitmap_page *xlrec = (xl_hash_init_bitmap_page *) XLogRecGetData(record);
 
@@ -80,16 +69,7 @@ hash_xlog_init_bitmap_page(XLogReaderState *record)
 	_hash_initbitmapbuffer(bitmapbuf, xlrec->bmsize, true);
 	PageSetLSN(BufferGetPage(bitmapbuf), lsn);
 	MarkBufferDirty(bitmapbuf);
-
-	/*
-	 * Force the on-disk state of init forks to always be in sync with the
-	 * state in shared buffers.  See XLogReadBufferForRedoExtended.  We need
-	 * special handling for init forks as create index operations don't log a
-	 * full page image of the metapage.
-	 */
-	XLogRecGetBlockTag(record, 0, NULL, &forknum, NULL);
-	if (forknum == INIT_FORKNUM && !am_wal_redo_postgres)
-		FlushOneBuffer(bitmapbuf);
+	XLogFlushBufferForRedoIfInit(record, 0, bitmapbuf);
 	UnlockReleaseBuffer(bitmapbuf);
 
 	/* add the new bitmap page to the metapage's list of bitmaps */
@@ -110,10 +90,7 @@ hash_xlog_init_bitmap_page(XLogReaderState *record)
 
 		PageSetLSN(page, lsn);
 		MarkBufferDirty(metabuf);
-
-		XLogRecGetBlockTag(record, 1, NULL, &forknum, NULL);
-		if (forknum == INIT_FORKNUM && !am_wal_redo_postgres)
-			FlushOneBuffer(metabuf);
+		XLogFlushBufferForRedoIfInit(record, 1, metabuf);
 	}
 	if (BufferIsValid(metabuf))
 		UnlockReleaseBuffer(metabuf);

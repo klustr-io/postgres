@@ -150,6 +150,9 @@ int			wal_segment_size = DEFAULT_XLOG_SEG_SIZE;
 restore_running_xacts_callback_t restore_running_xacts_callback = NULL;
 
 /* NEON: Hooks to facilitate the last written LSN cache */
+set_lwlsn_block_hook_type set_lwlsn_block_hook = NULL;
+set_lwlsn_block_range_hook_type set_lwlsn_block_range_hook = NULL;
+set_lwlsn_block_v_hook_type set_lwlsn_block_v_hook = NULL;
 set_lwlsn_db_hook_type set_lwlsn_db_hook = NULL;
 set_lwlsn_relation_hook_type set_lwlsn_relation_hook = NULL;
 set_max_lwlsn_hook_type set_max_lwlsn_hook = NULL;
@@ -1135,9 +1138,9 @@ XLogInsertRecord(XLogRecData *rdata,
  *
  * NB: Testing shows that XLogInsertRecord runs faster if this code is inlined;
  * however, because there are two call sites, the compiler is reluctant to
- * inline. We use pg_attribute_always_inline here to try to convince it.
+ * inline. We use pg_always_inline here to try to convince it.
  */
-static pg_attribute_always_inline void
+static pg_always_inline void
 ReserveXLogInsertLocation(int size, XLogRecPtr *StartPos, XLogRecPtr *EndPos,
 						  XLogRecPtr *PrevPtr)
 {
@@ -2465,9 +2468,6 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
 				written = pg_pwrite(openLogFile, from, nleft, startoffset);
 				pgstat_report_wait_end();
 
-				pgstat_count_io_op_time(IOOBJECT_WAL, IOCONTEXT_NORMAL,
-										IOOP_WRITE, start, 1, written);
-
 				if (written <= 0)
 				{
 					char		xlogfname[MAXFNAMELEN];
@@ -2485,6 +2485,9 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
 							 errmsg("could not write to log file \"%s\" at offset %u, length %zu: %m",
 									xlogfname, startoffset, nleft)));
 				}
+
+				pgstat_count_io_op_time(IOOBJECT_WAL, IOCONTEXT_NORMAL,
+										IOOP_WRITE, start, 1, written);
 				nleft -= written;
 				from += written;
 				startoffset += written;
@@ -3307,14 +3310,6 @@ XLogFileInitInternal(XLogSegNo logsegno, TimeLineID logtli,
 	}
 	pgstat_report_wait_end();
 
-	/*
-	 * A full segment worth of data is written when using wal_init_zero. One
-	 * byte is written when not using it.
-	 */
-	pgstat_count_io_op_time(IOOBJECT_WAL, IOCONTEXT_INIT, IOOP_WRITE,
-							io_start, 1,
-							wal_init_zero ? wal_segment_size : 1);
-
 	if (save_errno)
 	{
 		/*
@@ -3330,6 +3325,14 @@ XLogFileInitInternal(XLogSegNo logsegno, TimeLineID logtli,
 				(errcode_for_file_access(),
 				 errmsg("could not write to file \"%s\": %m", tmppath)));
 	}
+
+	/*
+	 * A full segment worth of data is written when using wal_init_zero. One
+	 * byte is written when not using it.
+	 */
+	pgstat_count_io_op_time(IOOBJECT_WAL, IOCONTEXT_INIT, IOOP_WRITE,
+							io_start, 1,
+							wal_init_zero ? wal_segment_size : 1);
 
 	/* Measure I/O timing when flushing segment */
 	io_start = pgstat_prepare_io_time(track_wal_io_timing);
@@ -6328,6 +6331,8 @@ StartupXLOG(void)
 	if (ArchiveRecoveryRequested)
 		CleanupAfterArchiveRecovery(EndOfLogTLI, EndOfLog, newTLI);
 
+	INJECTION_POINT("promotion-after-wal-segment-cleanup", NULL);
+
 	/*
 	 * Local WAL inserts enabled, so it's time to finish initialization of
 	 * commit timestamp.
@@ -7729,7 +7734,8 @@ CheckPointReplicationState(int flags)
 static void
 PreCheckPointGuts(int flags)
 {
-	if (flags & (CHECKPOINT_IS_SHUTDOWN|CHECKPOINT_END_OF_RECOVERY))
+	if (smgr_uses_custom_storage() &&
+		(flags & (CHECKPOINT_IS_SHUTDOWN|CHECKPOINT_END_OF_RECOVERY)))
 	{
 		CheckPointReplicationState(flags);
 		CheckPointBuffers(flags);
@@ -7752,8 +7758,9 @@ PreCheckPointGuts(int flags)
 static void
 CheckPointGuts(XLogRecPtr checkPointRedo, int flags)
 {
-	/* NEON: In shutdown checkpoints we've already checkpointed the replication state */
-	if (!(flags & (CHECKPOINT_IS_SHUTDOWN|CHECKPOINT_END_OF_RECOVERY)))
+	/* Only custom-storage primary shutdowns did this before choosing REDO. */
+	if (!smgr_uses_custom_storage() || RecoveryInProgress() ||
+		!(flags & (CHECKPOINT_IS_SHUTDOWN|CHECKPOINT_END_OF_RECOVERY)))
 		CheckPointReplicationState(flags);
 
 	/* Write out all dirty data in SLRUs and the main buffer pool */
@@ -7770,7 +7777,8 @@ CheckPointGuts(XLogRecPtr checkPointRedo, int flags)
 	 * Writing to the WAL during shutdown checkpoint cause Postgres panic.
 	 * So do it before in PreCheckPointGuts.
 	 */
-	if (!(flags & (CHECKPOINT_IS_SHUTDOWN|CHECKPOINT_END_OF_RECOVERY)))
+	if (!smgr_uses_custom_storage() || RecoveryInProgress() ||
+		!(flags & (CHECKPOINT_IS_SHUTDOWN|CHECKPOINT_END_OF_RECOVERY)))
 		CheckPointBuffers(flags);
 
 	/* Perform all queued up fsyncs */
@@ -7937,12 +7945,9 @@ CreateRestartPoint(int flags)
 	update_checkpoint_display(flags, true, false);
 
 	/*
-	 * NEON: CheckPointGuts expects certain operations to have happened
-	 * before, if the checkpoint is a shutdown checkpoint (indicated as
-	 * (flags & CHECKPOINT_IS_SHUTDOWN) != 0).  However, we don't care
-	 * much about shutdown checkpoints (we always rebuild the whole data
-	 * directory) so we don't care much about certain data not having
-	 * been synced - we'll get new and consistent data at the next start.
+	 * A restartpoint does not run PreCheckPointGuts. CheckPointGuts must
+	 * flush buffers and replication state even for a shutdown restartpoint;
+	 * otherwise a standalone standby can lose pages when it is restarted.
 	 */
 	CheckPointGuts(lastCheckPoint.redo, flags);
 
@@ -9723,6 +9728,22 @@ GetXLogInsertRecPtr(void)
 	SpinLockRelease(&Insert->insertpos_lck);
 
 	return XLogBytePosToRecPtr(current_bytepos);
+}
+
+/*
+ * Get latest WAL record end pointer
+ */
+XLogRecPtr
+GetXLogInsertEndRecPtr(void)
+{
+	XLogCtlInsert *Insert = &XLogCtl->Insert;
+	uint64		current_bytepos;
+
+	SpinLockAcquire(&Insert->insertpos_lck);
+	current_bytepos = Insert->CurrBytePos;
+	SpinLockRelease(&Insert->insertpos_lck);
+
+	return XLogBytePosToEndRecPtr(current_bytepos);
 }
 
 /*

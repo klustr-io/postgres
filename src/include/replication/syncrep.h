@@ -76,6 +76,10 @@ extern PGDLLIMPORT SyncRepConfigData *SyncRepConfig;
 /* user-settable parameters for synchronous replication */
 extern PGDLLIMPORT char *SyncRepStandbyNames;
 
+/* Called before the asynchronous fast exit, including prepared transactions. */
+typedef void (*SyncRepCommitGuard_hook_type)(XLogRecPtr lsn, bool commit);
+extern PGDLLIMPORT SyncRepCommitGuard_hook_type SyncRepCommitGuard_hook;
+
 /* called by user backend */
 extern void SyncRepWaitForLSN(XLogRecPtr lsn, bool commit);
 
