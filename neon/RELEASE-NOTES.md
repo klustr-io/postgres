@@ -29,7 +29,7 @@
   performance measurements are unchanged; near-native throughput is not certified.
 
 The updated controller is published under source tag
-`sha-7f4761771ea56d95bb815d96778c0d1a78f9a820` and pinned by digest in deployment
+`sha-1d895c7dcc2fb31e9dc480cf8cd9bd385a55532c` and pinned by digest in deployment
 YAML. The RC4 controller does not contain these changes. Storage/compute manifests
 pin the existing RC4 digests.
 

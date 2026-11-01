@@ -101,7 +101,7 @@ items:
           terminationGracePeriodSeconds: 20
           containers:
             - name: controller
-              image: ghcr.io/klustr-io/neon-tenant-controller@sha256:fe71ce0d74172f1c10b612930822ad2f86575cef9fc96f58ffdc230be94ba246
+              image: ghcr.io/klustr-io/neon-tenant-controller@sha256:d65148743f95a2262d110525c7e5f23cebc6a2763e6620113a5d5f35affb1b54
               imagePullPolicy: IfNotPresent
               env:
                 - name: POD_NAMESPACE

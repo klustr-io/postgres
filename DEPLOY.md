@@ -6,9 +6,9 @@ size/tier changes, demand webhooks, compute suspension and shared-storage suspen
 Applications use normal PostgreSQL connections, SQL and JSONB.
 
 **These changes are newer than RC4.** Deployment YAML pins the updated public
-controller image built from commit `7f4761771ea56d95bb815d96778c0d1a78f9a820`;
+controller image built from commit `1d895c7dcc2fb31e9dc480cf8cd9bd385a55532c`;
 other runtime images are pinned to RC4 digests. This is an integration candidate,
-not a production HA certification. [Controller build and publication](https://github.com/klustr-io/postgres/actions/runs/41303236063).
+not a production HA certification. [Controller build and publication](https://github.com/klustr-io/postgres/actions/runs/41304715810).
 
 ## Idle boundary and cost
 
@@ -232,7 +232,8 @@ curl --fail-with-body --cacert "$NEON_CA" -H "Authorization: Bearer $NEON_MANAGE
 
 Active queries and transactions defer stopping; there is no unsafe force-kill
 option. Purge requires the exact resource name and refuses dependent branches or
-backups. Delete those dependencies first. A retired name remains a tombstone and
+backups. Purge dependent branches, then delete their backups first; retiring a
+child with the default retain mode still preserves that dependency. A retired name remains a tombstone and
 cannot be resumed or reused through PUT; clone retained data to a new name instead.
 Deployment credentials/PVCs are retained; purge deletes the tenant or branch
 through the storage controller, never a shared bucket or another database.
