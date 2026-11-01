@@ -1,5 +1,10 @@
 # PostgreSQL 18 / Neon development
 
+For full-stack Docker Compose or Kubernetes deployment, use the root
+[DEPLOY.md](../../../DEPLOY.md). It provisions storage services and optional tenants.
+The lower-level controller configuration below remains useful for integration
+with separately managed storage.
+
 Use ordinary PostgreSQL SQL, JSONB and application schemas. Performance changes must remain internal to PostgreSQL/Neon; the custom document API experiment has been removed.
 
 ## Working layout

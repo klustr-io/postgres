@@ -1,0 +1,7 @@
+# Deployment source: neon/packaging/deploy/render.mjs
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: neon
+  labels:
+    pod-security.kubernetes.io/enforce: restricted

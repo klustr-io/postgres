@@ -1,0 +1,134 @@
+# Deployment source: neon/packaging/deploy/render.mjs
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: neondatabases.neon.klustr.io
+spec:
+  group: neon.klustr.io
+  scope: Namespaced
+  names:
+    kind: NeonDatabase
+    plural: neondatabases
+    singular: neondatabase
+    shortNames:
+      - neondb
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+        scale:
+          specReplicasPath: .spec.replicas
+          statusReplicasPath: .status.replicas
+          labelSelectorPath: .status.selector
+      additionalPrinterColumns:
+        - name: Size
+          type: string
+          jsonPath: .spec.size
+        - name: Tier
+          type: string
+          jsonPath: .spec.tier
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Replicas
+          type: integer
+          jsonPath: .status.replicas
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - size
+                - tier
+              properties:
+                replicas:
+                  type: integer
+                  minimum: 0
+                  maximum: 1
+                  default: 0
+                database:
+                  type: string
+                  pattern: ^[a-z][a-z0-9_]{0,62}$
+                  default: app
+                  x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: Database name is immutable
+                user:
+                  type: string
+                  pattern: ^[a-z][a-z0-9_]{0,62}$
+                  default: app_user
+                  x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: Database role is immutable
+                size:
+                  type: string
+                  maxLength: 39
+                tier:
+                  type: string
+                  maxLength: 39
+                profile:
+                  type: string
+                  enum:
+                    - durable
+                    - bounded-async
+                  default: durable
+                shards:
+                  type: integer
+                  enum:
+                    - 1
+                    - 2
+                    - 4
+                    - 8
+                    - 16
+                    - 32
+                  default: 1
+                allowedIps:
+                  type: array
+                  maxItems: 100
+                  minItems: 1
+                  items:
+                    type: string
+                    maxLength: 64
+                suspend:
+                  type: object
+                  default:
+                    mode: idle
+                    idleSeconds: 300
+                  properties:
+                    mode:
+                      type: string
+                      enum:
+                        - idle
+                        - never
+                      default: idle
+                    idleSeconds:
+                      type: integer
+                      minimum: 1
+                      maximum: 604800
+                      default: 300
+                databasePolicies:
+                  type: object
+                  additionalProperties:
+                    type: object
+                    properties:
+                      mode:
+                        type: string
+                        enum:
+                          - idle
+                          - never
+                      idleSeconds:
+                        type: integer
+                        minimum: 1
+                        maximum: 604800
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                replicas:
+                  type: integer
+                selector:
+                  type: string

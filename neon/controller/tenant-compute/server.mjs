@@ -1,19 +1,31 @@
 import fs from 'node:fs';
 import https from 'node:https';
 import http from 'node:http';
-import {timingSafeEqual} from 'node:crypto';
+import {timingSafeEqual,randomUUID} from 'node:crypto';
 import pg from 'pg';
 import {Kubernetes,Leadership} from './kubernetes.mjs';
 import {endpointConfig,secretText} from './config.mjs';
 import {Lifecycle} from './lifecycle.mjs';
 import {alwaysOn} from './activity.mjs';
 const namespace=process.env.POD_NAMESPACE,podName=process.env.POD_NAME;
-if(!namespace||!podName)throw Error('Kubernetes identity is required');
-const api=new Kubernetes({namespace}),leader=new Leadership(api,{podName});
-const lifecycle=new Lifecycle(api,leader,async options=>{const client=new pg.Client(options);client.on('error',()=>{});await client.connect();return client;});
+const compose=process.env.NEON_PLATFORM==='compose';
+if(!compose&&(!namespace||!podName))throw Error('Kubernetes identity is required');
+const runtime=compose?await (await import('./deploy/compose.mjs')).composeRuntime():null;
+const api=runtime?.api||new Kubernetes({namespace}),leader=runtime?.leader||new Leadership(api,{podName});
+const lifecycle=runtime?.lifecycle||new Lifecycle(api,leader,async options=>{const client=new pg.Client(options);client.on('error',()=>{});await client.connect();return client;});
 let endpoints=new Map(),polling=false,inFlight=0,stopping=false;
 const events={wakes:0,errors:0,suspends:0};
 const emit=(event,fields={})=>console.log(JSON.stringify({time:new Date().toISOString(),event,...fields}));
+const managed=!compose&&process.env.NEON_DATABASE_API==='true';
+const databases=managed?new (await import('./deploy/databases.mjs')).Databases({api,leader,lifecycle,getEndpoints:()=>endpoints,
+  configFile:process.env.NEON_DEPLOYMENT_CONFIG,emit}):null;
+const storage=process.env.NEON_DEPLOYMENT_CONFIG?new (await import('./deploy/routing.mjs')).StorageRouting({api,leader,lifecycle,compose,getEndpoints:()=>endpoints,
+  getConfig:async()=>databases?databases.desired():(await import('./deploy/config.mjs')).configuration(process.env.NEON_DEPLOYMENT_CONFIG)}):null;
+const fleet=databases&&process.env.NEON_FLEET_SCALE_TO_ZERO==='true'?new (await import('./deploy/fleet.mjs')).StorageFleet({api,leader,databases,
+  routing:storage,getEndpoints:()=>endpoints,emit}):null;
+if(fleet)databases.fleet=fleet;
+let scaler=null;
+let stopDatabaseWatch=null;
 async function refresh(){
   const resources=await api.list('configmaps','neon.klustr.io/endpoint=true');
   const next=new Map();
@@ -26,6 +38,8 @@ async function refresh(){
 async function poll(){
   if(polling||stopping)return;polling=true;
   try{
+    if(fleet)void fleet.reconcile();
+    if(databases)void databases.reconcile();
     await refresh();
     for(const uid of lifecycle.activity.keys())
       if(!leader.active||![...endpoints.values()].some(endpoint=>endpoint.uid===uid))await lifecycle.closeActivity({uid});
@@ -33,25 +47,44 @@ async function poll(){
       if(stopping||!leader.active)break;
       try{
         const before=endpoint.status.phase;
-        if(alwaysOn(endpoint))await lifecycle.wake(endpoint);else await lifecycle.idle(endpoint);
+        if(databases&&endpoint.databaseResource)await databases.endpoint(endpoint);
+        else if(alwaysOn(endpoint))await lifecycle.wake(endpoint);else await lifecycle.idle(endpoint);
         if(before!=='Dormant'&&endpoint.status.phase==='Dormant'){events.suspends++;emit('suspended',{endpoint:endpoint.endpointId});}
       }catch(error){events.errors++;emit('lifecycle_deferred',{endpoint:endpoint.endpointId,reason:error.code||'OPERATION_FAILED'});}
     }
   }catch{events.errors++;emit('reconcile_unavailable');}finally{polling=false;}
 }
-function authorized(request){
-  const expected=Buffer.from('Bearer '+fs.readFileSync(process.env.CONTROLLER_API_TOKEN_FILE||'/run/controller-auth/token','utf8').trim());
+function authorized(request,file=process.env.CONTROLLER_API_TOKEN_FILE||'/run/controller-auth/token'){
+  const expected=Buffer.from('Bearer '+fs.readFileSync(file,'utf8').trim());
   const actual=Buffer.from(request.headers.authorization||'');
   return expected.length>30&&expected.length===actual.length&&timingSafeEqual(expected,actual);
+}
+async function body(request){
+  const chunks=[];let size=0;
+  for await(const chunk of request){size+=chunk.length;if(size>16384)throw Error('Request too large');chunks.push(chunk);}
+  return JSON.parse(Buffer.concat(chunks).toString()||'{}');
 }
 function respond(response,status,body){
   const payload=JSON.stringify(body);response.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});response.end(payload);
 }
-const server=https.createServer({key:fs.readFileSync('/run/controller-tls/tls.key'),
-  cert:fs.readFileSync('/run/controller-tls/tls.crt'),minVersion:'TLSv1.2',maxHeaderSize:8192},async(request,response)=>{
+const server=https.createServer({key:fs.readFileSync(process.env.CONTROLLER_TLS_KEY||'/run/controller-tls/tls.key'),
+  cert:fs.readFileSync(process.env.CONTROLLER_TLS_CERT||'/run/controller-tls/tls.crt'),minVersion:'TLSv1.2',maxHeaderSize:8192},async(request,response)=>{
   if(stopping||inFlight>=32)return respond(response,503,{error:'Control plane busy'});
   inFlight++;
   try{
+    const management=request.url.match(/^\/v1\/databases\/([a-z][a-z0-9-]{0,38})(\/events)?$/);
+    if(databases&&management){
+      if(!authorized(request,process.env.NEON_MANAGEMENT_TOKEN_FILE||'/run/management/token'))return respond(response,401,{error:'Unauthorized'});
+      leader.require();
+      const name=management[1];
+      if(request.method==='PUT'&&!management[2]){
+        try{const resource=await databases.put(name,await body(request));void databases.reconcile();return respond(response,202,{name,generation:resource.metadata.generation});}
+        catch(error){if(error.code==='INVALID_SPEC'||error.status===422)return respond(response,422,{error:'Invalid database specification'});throw error;}
+      }
+      if(request.method==='POST'&&management[2]){await databases.event(name,await body(request));return respond(response,202,{name,accepted:true});}
+      if(request.method==='GET'&&!management[2]){const resource=await api.get('neondatabases',name);return respond(response,200,{name,spec:resource.spec,status:resource.status||{phase:'Pending'}});}
+      return respond(response,405,{error:'Unsupported database operation'});
+    }
     if(request.method!=='GET'||request.headers['transfer-encoding']||Number(request.headers['content-length']||0)!==0)
       return respond(response,405,{error:'GET without request body required'});
     if(!authorized(request))return respond(response,401,{error:'Unauthorized'});
@@ -74,8 +107,13 @@ const server=https.createServer({key:fs.readFileSync('/run/controller-tls/tls.ke
         project_id:endpoint.projectId,account_id:'self-hosted'});
     }
     if(url.pathname==='/wake_compute'){
-      const result=await lifecycle.wake(endpoint);leader.require();events.wakes++;
-      emit('compute_ready',{endpoint:id});return respond(response,200,result);
+      const complete=databases&&endpoint.databaseResource?databases.beginConnection(endpoint.databaseResource):()=>{};
+      try{
+        if(databases&&endpoint.databaseResource)await databases.event(endpoint.databaseResource,{id:'connection-'+randomUUID(),holdSeconds:3});
+        if(fleet)await fleet.ensureActive();
+        const result=await lifecycle.wake(endpoint);leader.require();events.wakes++;
+        emit('compute_ready',{endpoint:id});return respond(response,200,result);
+      }finally{complete();}
     }
     if(url.pathname===`/endpoints/${id}/jwks`)return respond(response,200,{jwks:[]});
     return respond(response,404,{error:'Unknown API method'});
@@ -87,7 +125,14 @@ const server=https.createServer({key:fs.readFileSync('/run/controller-tls/tls.ke
 });
 server.requestTimeout=10000;server.headersTimeout=5000;server.keepAliveTimeout=5000;
 server.maxConnections=256;server.maxRequestsPerSocket=1000;
-const health=http.createServer((request,response)=>{
+const health=http.createServer(async(request,response)=>{
+  if(['/notify-attach','/notify-safekeepers'].includes(request.url)&&request.method==='PUT'&&storage){
+    if(!authorized(request)||!leader.active)return respond(response,503,{error:'Hook unavailable'});
+    try{
+      await storage.notify(request.url==='/notify-attach'?'attach':'safekeepers',await body(request));
+      return respond(response,200,{status:'ok'});
+    }catch(error){emit('storage_reconfigure_deferred',{reason:error.code||'STORAGE_NOT_READY'});return respond(response,503,{error:'Storage reconfiguration deferred'});}
+  }
   if(request.url==='/livez')return respond(response,200,{status:'ok'});
   if(request.url==='/readyz')return respond(response,leader.active&&!stopping?200:503,{leader:leader.active});
   if(request.url==='/metrics'){
@@ -98,6 +143,14 @@ const health=http.createServer((request,response)=>{
   return respond(response,404,{error:'Not found'});
 });
 await leader.tick();await refresh();
+if(databases){
+  await databases.load();
+  scaler=await (await import('./keda/scaler.mjs')).startScaler({namespace,leader,demand:name=>name==='@fleet'?fleet.demand():databases.demand(name),
+    tls:{ca:'/run/trust/ca.crt',key:'/run/controller-tls/tls.key',cert:'/run/controller-tls/tls.crt'}});
+  databases.scaler=scaler;
+  if(fleet)fleet.scaler=scaler;
+  stopDatabaseWatch=databases.watch(()=>{void databases.reconcile();void poll();});
+}
 let previousLeaseError=null;
 const renew=setInterval(async()=>{
   await leader.tick();
@@ -108,6 +161,6 @@ server.listen(8080,'0.0.0.0');health.listen(9090,'0.0.0.0');emit('controller_sta
 async function shutdown(){
   if(stopping)return;stopping=true;clearInterval(renew);clearInterval(reconcile);
   // No replica changes during shutdown. Kubernetes state holds the handoff.
-  server.close();health.close();setTimeout(()=>process.exit(0),2000).unref();
+  stopDatabaseWatch?.();scaler?.close();server.close();health.close();setTimeout(()=>process.exit(0),2000).unref();
 }
 process.on('SIGTERM',shutdown);process.on('SIGINT',shutdown);

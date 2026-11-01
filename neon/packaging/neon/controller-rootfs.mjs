@@ -45,6 +45,8 @@ function copy(file,destination=file){
   if(fs.readFileSync(file).subarray(0,4).equals(Buffer.from([127,69,76,70])))queue.push(file);
 }
 copy('/usr/local/bin/node');
+copy('/usr/bin/openssl');
+copy('/etc/ssl/openssl.cnf', '/usr/lib/ssl/openssl.cnf');
 while(queue.length){
   const file=queue.pop(),output=execFileSync('ldd',[file],{encoding:'utf8'});
   if(output.includes('not found'))throw Error('Unresolved Node runtime dependency');

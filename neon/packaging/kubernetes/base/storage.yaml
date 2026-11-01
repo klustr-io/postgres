@@ -1,0 +1,924 @@
+# Deployment source: neon/packaging/deploy/render.mjs
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: metadata
+    spec:
+      clusterIP: None
+      publishNotReadyAddresses: true
+      selector:
+        app: metadata
+      ports:
+        - name: postgres
+          port: 5432
+          targetPort: 5432
+  - apiVersion: apps/v1
+    kind: StatefulSet
+    metadata:
+      name: metadata
+    spec:
+      serviceName: metadata
+      replicas: 1
+      selector:
+        matchLabels:
+          app: metadata
+      template:
+        metadata:
+          labels:
+            app: metadata
+        spec:
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          terminationGracePeriodSeconds: 120
+          containers:
+            - name: metadata
+              image: ghcr.io/klustr-io/neon-compute@sha256:c7d0b5e0a359941fb766253bd8e2b0f8fe6408a6fa855ebf0287070ef280abc8
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -ec
+                - |-
+                  if [ ! -f /var/lib/neon/metadata/PG_VERSION ]; then /opt/postgres/v18/bin/initdb -D /var/lib/neon/metadata -U neon --pwfile=/run/metadata/password --auth-host=scram-sha-256; fi; printf "local all all trust
+                   host postgres neon 0.0.0.0/0 scram-sha-256
+                   host postgres neon ::/0 scram-sha-256
+                  " > /var/lib/neon/metadata/pg_hba.conf; exec /opt/postgres/v18/bin/postgres -D /var/lib/neon/metadata -c listen_addresses=* -p 5432
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 256Mi
+                limits:
+                  cpu: "2"
+                  memory: 2Gi
+              ports:
+                - name: postgres
+                  containerPort: 5432
+              readinessProbe:
+                exec:
+                  command:
+                    - /opt/postgres/v18/bin/pg_isready
+                    - -U
+                    - neon
+                    - -d
+                    - postgres
+              volumeMounts:
+                - name: data
+                  mountPath: /var/lib/neon
+                - name: metadata
+                  mountPath: /run/metadata
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi
+            - name: metadata
+              secret:
+                secretName: neon-metadata
+                defaultMode: 288
+          nodeSelector:
+            kubernetes.io/arch: amd64
+            kubernetes.io/os: linux
+      volumeClaimTemplates:
+        - metadata:
+            name: data
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 10Gi
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: storage-broker
+    spec:
+      selector:
+        app: storage-broker
+      ports:
+        - name: grpc
+          port: 50051
+          targetPort: 50051
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: storage-broker
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: storage-broker
+      template:
+        metadata:
+          labels:
+            app: storage-broker
+        spec:
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: broker
+              image: ghcr.io/klustr-io/neon-storage-broker@sha256:c66d30b177d651148d2c70e52c9e974a289dca236aa8cfa33896a8ed6cf55208
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              ports:
+                - containerPort: 50051
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: "1"
+                  memory: 256Mi
+          nodeSelector:
+            kubernetes.io/arch: amd64
+            kubernetes.io/os: linux
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: storage-controller
+    spec:
+      selector:
+        app: storage-controller
+      ports:
+        - name: http
+          port: 1234
+          targetPort: 1234
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: storage-controller
+    spec:
+      replicas: 1
+      strategy:
+        type: Recreate
+      selector:
+        matchLabels:
+          app: storage-controller
+      template:
+        metadata:
+          labels:
+            app: storage-controller
+        spec:
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: controller
+              image: ghcr.io/klustr-io/neon-storage-controller@sha256:4716c664590fea18d9a49bd36502ff9ff6d47352f1a952213b606d1cf04bd13b
+              command:
+                - /bin/sh
+                - -ec
+                - exec /usr/local/bin/storage_controller --listen 0.0.0.0:1234 --initial-split-threshold 17179869184 --initial-split-shards 2 --split-threshold 1099511627776 --max-split-shards 16 --control-plane-url http://neon-controller:9090 --control-plane-jwt-token "$(cat /run/neon/controller-token)" --address-for-peers http://storage-controller:1234 --database-url "postgresql://neon:$(cat /run/metadata/password)@metadata:5432/postgres" --public-key="$(cat /run/neon/storage.pub)" --jwt-token "$(cat /run/neon/pageserver.jwt)" --safekeeper-jwt-token "$(cat /run/neon/safekeeper.jwt)" --peer-jwt-token "$(cat /run/neon/peer.jwt)"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              ports:
+                - containerPort: 1234
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+              readinessProbe:
+                tcpSocket:
+                  port: 1234
+              volumeMounts:
+                - name: storage-config
+                  mountPath: /run/neon
+                  readOnly: true
+                - name: metadata
+                  mountPath: /run/metadata
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: storage-config
+              secret:
+                secretName: neon-storage-controller-config
+                defaultMode: 288
+            - name: metadata
+              secret:
+                secretName: neon-metadata
+                defaultMode: 288
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi
+          nodeSelector:
+            kubernetes.io/arch: amd64
+            kubernetes.io/os: linux
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: pageserver
+    spec:
+      clusterIP: None
+      publishNotReadyAddresses: true
+      selector:
+        app: pageserver
+      ports:
+        - name: postgres
+          port: 6400
+          targetPort: 6400
+        - name: http
+          port: 9898
+          targetPort: 9898
+  - apiVersion: apps/v1
+    kind: StatefulSet
+    metadata:
+      name: pageserver
+    spec:
+      serviceName: pageserver
+      replicas: 1
+      selector:
+        matchLabels:
+          app: pageserver
+      template:
+        metadata:
+          labels:
+            app: pageserver
+        spec:
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          terminationGracePeriodSeconds: 120
+          containers:
+            - name: pageserver
+              image: ghcr.io/klustr-io/neon-pageserver@sha256:b5e045980dd183cdb853cfb870696a31bee85e05aba927163b7c78bb20473d53
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -ec
+                - cat /run/neon/pageserver.toml > /var/lib/neon/pageserver.toml; printf "id=1\n" > /var/lib/neon/identity.toml; export NEON_AUTH_TOKEN="$(cat /run/neon/safekeeper.jwt)"; exec /usr/local/bin/pageserver -D /var/lib/neon
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 512Mi
+                limits:
+                  cpu: "2"
+                  memory: 2Gi
+              envFrom:
+                - secretRef:
+                    name: neon-s3
+              env:
+                - name: AWS_EC2_METADATA_DISABLED
+                  value: "true"
+              ports:
+                - name: postgres
+                  containerPort: 6400
+                - name: http
+                  containerPort: 9898
+              readinessProbe:
+                tcpSocket:
+                  port: 6400
+                periodSeconds: 3
+              volumeMounts:
+                - name: data
+                  mountPath: /var/lib/neon
+                - name: storage-config
+                  mountPath: /run/neon
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi
+            - name: storage-config
+              secret:
+                secretName: neon-pageserver-config
+                defaultMode: 288
+          nodeSelector:
+            kubernetes.io/arch: amd64
+            kubernetes.io/os: linux
+      volumeClaimTemplates:
+        - metadata:
+            name: data
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 10Gi
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: pageserver-2
+    spec:
+      clusterIP: None
+      publishNotReadyAddresses: true
+      selector:
+        app: pageserver-2
+      ports:
+        - name: postgres
+          port: 6400
+          targetPort: 6400
+        - name: http
+          port: 9898
+          targetPort: 9898
+  - apiVersion: apps/v1
+    kind: StatefulSet
+    metadata:
+      name: pageserver-2
+    spec:
+      serviceName: pageserver-2
+      replicas: 1
+      selector:
+        matchLabels:
+          app: pageserver-2
+      template:
+        metadata:
+          labels:
+            app: pageserver-2
+        spec:
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          terminationGracePeriodSeconds: 120
+          containers:
+            - name: pageserver-2
+              image: ghcr.io/klustr-io/neon-pageserver@sha256:b5e045980dd183cdb853cfb870696a31bee85e05aba927163b7c78bb20473d53
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -ec
+                - cat /run/neon/pageserver.toml > /var/lib/neon/pageserver.toml; printf "id=2\n" > /var/lib/neon/identity.toml; export NEON_AUTH_TOKEN="$(cat /run/neon/safekeeper.jwt)"; exec /usr/local/bin/pageserver -D /var/lib/neon
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 512Mi
+                limits:
+                  cpu: "2"
+                  memory: 2Gi
+              envFrom:
+                - secretRef:
+                    name: neon-s3
+              env:
+                - name: AWS_EC2_METADATA_DISABLED
+                  value: "true"
+              ports:
+                - name: postgres
+                  containerPort: 6400
+                - name: http
+                  containerPort: 9898
+              readinessProbe:
+                tcpSocket:
+                  port: 6400
+                periodSeconds: 3
+              volumeMounts:
+                - name: data
+                  mountPath: /var/lib/neon
+                - name: storage-config
+                  mountPath: /run/neon
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi
+            - name: storage-config
+              secret:
+                secretName: neon-pageserver-config
+                defaultMode: 288
+          nodeSelector:
+            kubernetes.io/arch: amd64
+            kubernetes.io/os: linux
+      volumeClaimTemplates:
+        - metadata:
+            name: data
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 10Gi
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: safekeeper-1
+    spec:
+      clusterIP: None
+      publishNotReadyAddresses: true
+      selector:
+        app: safekeeper-1
+      ports:
+        - name: postgres
+          port: 5454
+          targetPort: 5454
+        - name: http
+          port: 7676
+          targetPort: 7676
+  - apiVersion: apps/v1
+    kind: StatefulSet
+    metadata:
+      name: safekeeper-1
+    spec:
+      serviceName: safekeeper-1
+      replicas: 1
+      selector:
+        matchLabels:
+          app: safekeeper-1
+      template:
+        metadata:
+          labels:
+            app: safekeeper-1
+        spec:
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          terminationGracePeriodSeconds: 120
+          containers:
+            - name: safekeeper-1
+              image: ghcr.io/klustr-io/neon-safekeeper@sha256:102cad9f13f67e1da256d69e5437399ad090e2100c63136a10b3f52b4b0c4b59
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -ec
+                - exec /usr/local/bin/safekeeper -D /var/lib/neon --id 1 --listen-pg 0.0.0.0:5454 --listen-http 0.0.0.0:7676 --advertise-pg safekeeper-1:5454 --broker-endpoint http://storage-broker:50051 --pg-auth-public-key-path /run/neon/storage.pub --http-auth-public-key-path /run/neon/storage.pub --auth-token-path /run/neon/safekeeper.jwt --remote-storage "$(cat /run/neon/remote.toml)"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 512Mi
+                limits:
+                  cpu: "2"
+                  memory: 2Gi
+              envFrom:
+                - secretRef:
+                    name: neon-s3
+              env:
+                - name: AWS_EC2_METADATA_DISABLED
+                  value: "true"
+              ports:
+                - name: postgres
+                  containerPort: 5454
+                - name: http
+                  containerPort: 7676
+              readinessProbe:
+                tcpSocket:
+                  port: 5454
+                periodSeconds: 3
+              volumeMounts:
+                - name: data
+                  mountPath: /var/lib/neon
+                - name: storage-config
+                  mountPath: /run/neon
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi
+            - name: storage-config
+              secret:
+                secretName: neon-safekeeper-config
+                defaultMode: 288
+          nodeSelector:
+            kubernetes.io/arch: amd64
+            kubernetes.io/os: linux
+      volumeClaimTemplates:
+        - metadata:
+            name: data
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 10Gi
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: safekeeper-2
+    spec:
+      clusterIP: None
+      publishNotReadyAddresses: true
+      selector:
+        app: safekeeper-2
+      ports:
+        - name: postgres
+          port: 5454
+          targetPort: 5454
+        - name: http
+          port: 7676
+          targetPort: 7676
+  - apiVersion: apps/v1
+    kind: StatefulSet
+    metadata:
+      name: safekeeper-2
+    spec:
+      serviceName: safekeeper-2
+      replicas: 1
+      selector:
+        matchLabels:
+          app: safekeeper-2
+      template:
+        metadata:
+          labels:
+            app: safekeeper-2
+        spec:
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          terminationGracePeriodSeconds: 120
+          containers:
+            - name: safekeeper-2
+              image: ghcr.io/klustr-io/neon-safekeeper@sha256:102cad9f13f67e1da256d69e5437399ad090e2100c63136a10b3f52b4b0c4b59
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -ec
+                - exec /usr/local/bin/safekeeper -D /var/lib/neon --id 2 --listen-pg 0.0.0.0:5454 --listen-http 0.0.0.0:7676 --advertise-pg safekeeper-2:5454 --broker-endpoint http://storage-broker:50051 --pg-auth-public-key-path /run/neon/storage.pub --http-auth-public-key-path /run/neon/storage.pub --auth-token-path /run/neon/safekeeper.jwt --remote-storage "$(cat /run/neon/remote.toml)"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 512Mi
+                limits:
+                  cpu: "2"
+                  memory: 2Gi
+              envFrom:
+                - secretRef:
+                    name: neon-s3
+              env:
+                - name: AWS_EC2_METADATA_DISABLED
+                  value: "true"
+              ports:
+                - name: postgres
+                  containerPort: 5454
+                - name: http
+                  containerPort: 7676
+              readinessProbe:
+                tcpSocket:
+                  port: 5454
+                periodSeconds: 3
+              volumeMounts:
+                - name: data
+                  mountPath: /var/lib/neon
+                - name: storage-config
+                  mountPath: /run/neon
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi
+            - name: storage-config
+              secret:
+                secretName: neon-safekeeper-config
+                defaultMode: 288
+          nodeSelector:
+            kubernetes.io/arch: amd64
+            kubernetes.io/os: linux
+      volumeClaimTemplates:
+        - metadata:
+            name: data
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 10Gi
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: safekeeper-3
+    spec:
+      clusterIP: None
+      publishNotReadyAddresses: true
+      selector:
+        app: safekeeper-3
+      ports:
+        - name: postgres
+          port: 5454
+          targetPort: 5454
+        - name: http
+          port: 7676
+          targetPort: 7676
+  - apiVersion: apps/v1
+    kind: StatefulSet
+    metadata:
+      name: safekeeper-3
+    spec:
+      serviceName: safekeeper-3
+      replicas: 1
+      selector:
+        matchLabels:
+          app: safekeeper-3
+      template:
+        metadata:
+          labels:
+            app: safekeeper-3
+        spec:
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          terminationGracePeriodSeconds: 120
+          containers:
+            - name: safekeeper-3
+              image: ghcr.io/klustr-io/neon-safekeeper@sha256:102cad9f13f67e1da256d69e5437399ad090e2100c63136a10b3f52b4b0c4b59
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -ec
+                - exec /usr/local/bin/safekeeper -D /var/lib/neon --id 3 --listen-pg 0.0.0.0:5454 --listen-http 0.0.0.0:7676 --advertise-pg safekeeper-3:5454 --broker-endpoint http://storage-broker:50051 --pg-auth-public-key-path /run/neon/storage.pub --http-auth-public-key-path /run/neon/storage.pub --auth-token-path /run/neon/safekeeper.jwt --remote-storage "$(cat /run/neon/remote.toml)"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 512Mi
+                limits:
+                  cpu: "2"
+                  memory: 2Gi
+              envFrom:
+                - secretRef:
+                    name: neon-s3
+              env:
+                - name: AWS_EC2_METADATA_DISABLED
+                  value: "true"
+              ports:
+                - name: postgres
+                  containerPort: 5454
+                - name: http
+                  containerPort: 7676
+              readinessProbe:
+                tcpSocket:
+                  port: 5454
+                periodSeconds: 3
+              volumeMounts:
+                - name: data
+                  mountPath: /var/lib/neon
+                - name: storage-config
+                  mountPath: /run/neon
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi
+            - name: storage-config
+              secret:
+                secretName: neon-safekeeper-config
+                defaultMode: 288
+          nodeSelector:
+            kubernetes.io/arch: amd64
+            kubernetes.io/os: linux
+      volumeClaimTemplates:
+        - metadata:
+            name: data
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 10Gi
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: neon-metadata-ingress
+    spec:
+      podSelector:
+        matchExpressions:
+          - key: app
+            operator: In
+            values:
+              - metadata
+      policyTypes:
+        - Ingress
+      ingress:
+        - from:
+            - podSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - storage-controller
+          ports:
+            - protocol: TCP
+              port: 5432
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: neon-storage-controller-ingress
+    spec:
+      podSelector:
+        matchExpressions:
+          - key: app
+            operator: In
+            values:
+              - storage-controller
+      policyTypes:
+        - Ingress
+      ingress:
+        - from:
+            - podSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - neon-bootstrap
+                      - pageserver
+                      - pageserver-2
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: neon-tenant-controller
+          ports:
+            - protocol: TCP
+              port: 1234
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: neon-pageserver-ingress
+    spec:
+      podSelector:
+        matchExpressions:
+          - key: app
+            operator: In
+            values:
+              - pageserver
+              - pageserver-2
+      policyTypes:
+        - Ingress
+      ingress:
+        - from:
+            - podSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - storage-controller
+                      - neon-bootstrap
+          ports:
+            - protocol: TCP
+              port: 9898
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: neon-compute
+          ports:
+            - protocol: TCP
+              port: 6400
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: neon-safekeeper-ingress
+    spec:
+      podSelector:
+        matchExpressions:
+          - key: app
+            operator: In
+            values:
+              - safekeeper-1
+              - safekeeper-2
+              - safekeeper-3
+      policyTypes:
+        - Ingress
+      ingress:
+        - from:
+            - podSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - storage-controller
+                      - neon-bootstrap
+                      - safekeeper-1
+                      - safekeeper-2
+                      - safekeeper-3
+          ports:
+            - protocol: TCP
+              port: 7676
+        - from:
+            - podSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - pageserver
+                      - pageserver-2
+                      - safekeeper-1
+                      - safekeeper-2
+                      - safekeeper-3
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: neon-compute
+          ports:
+            - protocol: TCP
+              port: 5454
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: neon-broker-ingress
+    spec:
+      podSelector:
+        matchExpressions:
+          - key: app
+            operator: In
+            values:
+              - storage-broker
+      policyTypes:
+        - Ingress
+      ingress:
+        - from:
+            - podSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - pageserver
+                      - pageserver-2
+                      - safekeeper-1
+                      - safekeeper-2
+                      - safekeeper-3
+          ports:
+            - protocol: TCP
+              port: 50051

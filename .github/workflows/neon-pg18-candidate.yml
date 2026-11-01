@@ -26,12 +26,20 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24.19.0'
+      - name: Install controller dependencies
+        run: npm ci --prefix neon/controller/tenant-compute --ignore-scripts --no-audit --no-fund
       - name: Focused controller and storage-health checks
         run: node --test neon/tests/neon/unit/*.test.mjs
       - name: Build entry point syntax
         run: |
           node --check neon/build.mjs
           node --check neon/publish.mjs
+          node --check neon/controller/tenant-compute/deploy/bootstrap.mjs
+          node --check neon/controller/tenant-compute/deploy/compose.mjs
+          node --check neon/controller/tenant-compute/deploy/databases.mjs
+          node --check neon/controller/tenant-compute/deploy/fleet.mjs
+          node --check neon/controller/tenant-compute/keda/scaler.mjs
+          node --check neon/packaging/deploy/render.mjs
   build:
     if: github.event_name != 'pull_request'
     needs: checks

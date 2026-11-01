@@ -71,7 +71,7 @@ export class Lifecycle {
           '--config','/run/compute-spec/config.json'],
         env:[{name:'OTEL_SDK_DISABLED',value:'true'}],
         ports:[{name:'postgres',containerPort:5432}],
-        resources:{requests:{cpu:'250m',memory:'512Mi'},limits:{cpu:'2',memory:'2Gi'}},
+        resources:{requests:{cpu:'250m',memory:'512Mi',...endpoint.resources?.requests},limits:{cpu:'2',memory:'2Gi',...endpoint.resources?.limits}},
         securityContext:{allowPrivilegeEscalation:false,readOnlyRootFilesystem:true,capabilities:{drop:['ALL']}},
         // The controller verifies SQL and the remote quorum before opening the
         // Service. Process probes avoid counting probe logins as user activity.
@@ -194,9 +194,32 @@ export class Lifecycle {
     const monitor=this.activity.get(endpoint.uid);this.activity.delete(endpoint.uid);
     if(monitor)await monitor.client.end();
   }
-  async suspendLocked(endpoint,resume=false){
+  async sampleDemand(endpoint){return this.serialized(endpoint,async()=>{
+    const deployment=await this.api.optional('deployments',endpoint.name);
+    if(!deployment||deployment.spec.replicas===0)return false;
+    this.owned(deployment,endpoint);
+    const pods=await this.pods(endpoint);if(pods.length!==1||!this.ready(pods[0]))return true;
+    let monitor=this.activity.get(endpoint.uid);
+    if(monitor&&monitor.podUID!==pods[0].metadata.uid){await this.closeActivity(endpoint);monitor=null;}
+    if(!monitor){monitor={client:await this.admin(endpoint,pods[0]),tracker:new Activity(this.clock),podUID:pods[0].metadata.uid};this.activity.set(endpoint.uid,monitor);}
+    try{
+      const observed={...endpoint,suspend:{mode:'idle',idleSeconds:1},databasePolicies:{}};
+      return !monitor.tracker.observe(await this.activitySample(monitor.client),observed);
+    }catch(error){await this.closeActivity(endpoint);throw error;}
+  });}
+  async suspend(endpoint){return this.serialized(endpoint,async()=>{
+    const deployment=await this.api.optional('deployments',endpoint.name);
+    if(!deployment||deployment.spec.replicas===0)return false;
+    this.owned(deployment,endpoint);return this.suspendLocked(endpoint);
+  });}
+  async maintenanceSuspend(endpoint){return this.serialized(endpoint,async()=>{
+    const deployment=await this.api.optional('deployments',endpoint.name);
+    if(!deployment||deployment.spec.replicas===0)return true;
+    this.owned(deployment,endpoint);return this.suspendLocked(endpoint,false,true);
+  });}
+  async suspendLocked(endpoint,resume=false,maintenance=false){
     this.readyCache.delete(endpoint.uid);
-    if(alwaysOn(endpoint)){await this.admission(endpoint,true);await this.status(endpoint,{phase:'Active'});return false;}
+    if(alwaysOn(endpoint)&&!maintenance){await this.admission(endpoint,true);await this.status(endpoint,{phase:'Active'});return false;}
     await this.closeActivity(endpoint);
     const pods=await this.pods(endpoint);
     if(pods.length!==1||!this.ready(pods[0]))throw Error('A verified running compute is required to drain');

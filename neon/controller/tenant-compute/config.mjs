@@ -1,7 +1,7 @@
 import {isIP} from 'node:net';
 import {createHash} from 'node:crypto';
 import {policy} from './activity.mjs';
-const dns=value=>typeof value==='string'&&/^[a-z0-9][a-z0-9-]{0,48}$/.test(value);
+const dns=value=>typeof value==='string'&&/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(value);
 export function endpointConfig(resource){
   const config=JSON.parse(resource.data?.['endpoint.json']||'null');
   if(!config||!dns(config.endpointId)||!config.endpointId.startsWith('ep-'))throw Error('Invalid endpoint ID');
@@ -11,6 +11,13 @@ export function endpointConfig(resource){
   if(typeof config.image!=='string'||!/^[-a-zA-Z0-9./:]+@sha256:[a-f0-9]{64}$/.test(config.image))throw Error('Compute image must be digest-pinned');
   if(typeof config.nodeName!=='string'||!/^[a-z0-9][a-z0-9.-]{0,252}$/.test(config.nodeName))throw Error('Explicit compute worker placement is required');
   if(!['durable','bounded-async'].includes(config.profile))throw Error('Invalid commit profile');
+  if(config.resources){
+    if(typeof config.resources!=='object'||Array.isArray(config.resources))throw Error('Invalid compute resources');
+    for(const section of ['requests','limits'])for(const [key,value] of Object.entries(config.resources[section]||{}))
+      if(!['cpu','memory','ephemeral-storage'].includes(key)||typeof value!=='string'||!/^([0-9]+(?:\.[0-9]+)?)(?:m|Ki|Mi|Gi|Ti)?$/.test(value))throw Error('Invalid compute resource quantity');
+    if(config.resources.dockerCpus!==undefined&&(!Number.isFinite(config.resources.dockerCpus)||config.resources.dockerCpus<=0))throw Error('Invalid Docker CPU budget');
+    if(config.resources.dockerMemoryBytes!==undefined&&(!Number.isSafeInteger(config.resources.dockerMemoryBytes)||config.resources.dockerMemoryBytes<536870912))throw Error('Invalid Docker memory budget');
+  }
   config.suspend=policy(config.suspend,config.idleSeconds??300);
   for(const [name,value] of Object.entries(config.databasePolicies||{})){
     if(!name||Buffer.byteLength(name)>63||['template0','template1'].includes(name))throw Error('Invalid database policy name');
@@ -25,7 +32,7 @@ export function endpointConfig(resource){
   for(const key of ['projectId','branchId'])if(typeof config[key]!=='string'||config[key].length>128||!config[key])throw Error('Missing metric identity');
   const revision=createHash('sha256').update(JSON.stringify(config)).digest('hex');
   const computeRevision=createHash('sha256').update(JSON.stringify(Object.fromEntries(
-    ['computeSpecSecret','adminSecret','tlsSecret','caSecret','nodeName','image','profile'].map(key=>[key,config[key]])))).digest('hex');
+    ['computeSpecSecret','adminSecret','tlsSecret','caSecret','nodeName','image','profile','resources','specRevision'].map(key=>[key,config[key]])))).digest('hex');
   return {...config,name:resource.metadata.name,uid:resource.metadata.uid,revision,computeRevision,
     status:JSON.parse(resource.data?.['status.json']||'{}')};
 }

@@ -34,7 +34,8 @@ export class Kubernetes {
   }
   path(kind,name=''){
     const prefixes={configmaps:'/api/v1',secrets:'/api/v1',services:'/api/v1',pods:'/api/v1',
-      deployments:'/apis/apps/v1',leases:'/apis/coordination.k8s.io/v1',endpointslices:'/apis/discovery.k8s.io/v1'};
+      deployments:'/apis/apps/v1',statefulsets:'/apis/apps/v1',leases:'/apis/coordination.k8s.io/v1',endpointslices:'/apis/discovery.k8s.io/v1',
+      neondatabases:'/apis/neon.klustr.io/v1alpha1',neonstoragefleets:'/apis/neon.klustr.io/v1alpha1',scaledobjects:'/apis/keda.sh/v1alpha1',triggerauthentications:'/apis/keda.sh/v1alpha1'};
     if(!prefixes[kind]||name&&!/^[a-z0-9][a-z0-9.-]{0,252}$/.test(name))throw Error('Invalid resource path');
     return `${prefixes[kind]}/namespaces/${this.namespace}/${kind}${name?'/'+name:''}`;
   }
@@ -50,6 +51,35 @@ export class Kubernetes {
       continuation=page.metadata.continue||'';
     }while(continuation);
     return items;
+  }
+  watch(kind,onEvent,onError=()=>{}){
+    let stopped=false,current=null,timer=null,version='';
+    const reconnect=()=>{if(stopped||timer)return;timer=setTimeout(()=>{timer=null;connect();},1000);timer.unref();};
+    const connect=()=>{
+      if(stopped)return;
+      const query=new URLSearchParams({watch:'true',allowWatchBookmarks:'true',timeoutSeconds:'60',...(version?{resourceVersion:version}:{})});
+      const token=fs.readFileSync(this.account+'/token','utf8').trim();
+      current=https.request({host:this.host,port:this.port,path:this.path(kind)+'?'+query,agent:this.agent,
+        headers:{Authorization:'Bearer '+token,Accept:'application/json'}},response=>{
+        if(response.statusCode!==200){if(response.statusCode===410)version='';onError(new ApiError(response.statusCode));response.resume();reconnect();return;}
+        let buffer='';response.setEncoding('utf8');
+        response.on('data',data=>{
+          buffer+=data;if(buffer.length>1024*1024){current.destroy(Error('Watch frame limit'));return;}
+          let newline;
+          while((newline=buffer.indexOf('\n'))>=0){
+            const line=buffer.slice(0,newline);buffer=buffer.slice(newline+1);if(!line.trim())continue;
+            try{const event=JSON.parse(line);if(event.object?.metadata?.resourceVersion)version=event.object.metadata.resourceVersion;
+              if(event.type==='ERROR'){if(event.object.code===410)version='';current.destroy(Error('Watch resync'));return;}
+              if(event.type!=='BOOKMARK')onEvent(event);
+            }catch(error){onError(error);current.destroy();return;}
+          }
+        });
+        response.on('end',reconnect);response.on('error',error=>{if(!stopped)onError(error);reconnect();});
+      });
+      current.setTimeout(75000,()=>current.destroy(Error('Watch deadline')));
+      current.on('error',error=>{if(!stopped)onError(error);reconnect();});current.end();
+    };
+    connect();return ()=>{stopped=true;if(timer)clearTimeout(timer);current?.destroy();};
   }
 }
 

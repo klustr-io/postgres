@@ -1,3 +1,30 @@
+# Deployment support — unreleased
+
+- Checked-in Docker Compose and Kubernetes/Kustomize YAML provision the broker,
+  two pageservers, three safekeepers, metadata PostgreSQL, storage controller and proxy.
+- Shared bootstrap accepts S3 configuration and optional tenants; retains generated
+  TLS/SCRAM/storage credentials and creates PG18 tenants, timelines and endpoints.
+- Compose can drain and stop/start compute through the Docker API. Kubernetes
+  retains its drain-before-zero behavior. Both support idle/never policies.
+- Declarative `NeonDatabase` resources select provider-owned size/tier presets,
+  PostgreSQL memory/connection settings, read admission budgets and secondary placement.
+- Kubernetes watches and authenticated management/event webhooks drive continuous
+  provisioning. KEDA external-push scaling uses mutual TLS and drain-aware scale
+  subresources rather than directly scaling PostgreSQL Deployments.
+- Storage placement/sharding and safekeeper membership hooks persist routing and
+  reload active compute. Size changes use a guarded, drained restart.
+- `NeonStorageFleet` can suspend all database/storage worker Pods after the final
+  compute sleeps and S3's generation-validated frontier covers its WAL. Gateway,
+  lifecycle control and Kubernetes/KEDA remain available to wake the stack.
+- A local full-fleet cold wake/readback passed in about 20 seconds with cached
+  images and an already-running worker; this is one integration sample, not an SLA.
+- Physical node provisioning/fencing, project HTTP/SNI routing, hard write-I/O
+  isolation and production HA/RPO qualification remain open. Existing native-PG
+  performance measurements are unchanged; near-native throughput is not certified.
+
+These changes require a new controller image; the published RC4 controller does
+not contain them. Storage/compute manifests pin the existing RC4 digests.
+
 # Neon PostgreSQL 18.6 — 18.6-rc.4
 
 This release candidate builds PostgreSQL and the Neon data plane from one

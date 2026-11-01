@@ -1,0 +1,16 @@
+# Deployment source: neon/packaging/deploy/render.mjs
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: neon-keda-tls
+spec:
+  secretTargetRef:
+    - parameter: caCert
+      name: neon-keda-client-tls
+      key: ca.crt
+    - parameter: tlsClientCert
+      name: neon-keda-client-tls
+      key: tls.crt
+    - parameter: tlsClientKey
+      name: neon-keda-client-tls
+      key: tls.key

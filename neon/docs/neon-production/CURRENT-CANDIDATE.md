@@ -1,5 +1,9 @@
 # Current candidate: PostgreSQL 18.6 / AMD64
 
+The current working branch additionally contains unreleased KEDA/database/fleet
+lifecycle support. See [DEPLOY.md](../../../DEPLOY.md) for its scope and build
+requirements; these changes are not included in the RC4 controller image below.
+
 `18.6-rc.4` is the first single-checkout GitHub publication candidate. The engine,
 Neon runtime, extensions and tenant controller build directly from checked-in
 source. Applications retain standard PostgreSQL SQL and JSONB.

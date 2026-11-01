@@ -8,6 +8,7 @@ Kubernetes tenant/compute controller. The current release candidate is
 · [Releases and public OCI downloads](https://github.com/klustr-io/postgres/releases)
 · [Release notes](neon/RELEASE-NOTES.md)
 · [Source/build guide](neon/README.md)
+· [Kubernetes tenant deployment and scaling](DEPLOY.md)
 
 ## Published images
 
@@ -35,7 +36,8 @@ docker pull ghcr.io/klustr-io/neon-compute:18.6-rc.4
 GitHub creates new GHCR packages private initially. An organization administrator
 must set each package's visibility to Public once to enable anonymous registry
 pulls. See [GitHub's package visibility rules](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility).
-The release manifest records anonymous-pull verification. Public release
+The release manifest records verification at publication time; package visibility
+can change afterward. Public release
 archives provide an independent download path:
 
 ```sh
@@ -77,16 +79,23 @@ are limited to the separate publication job.
 
 ## Kubernetes and qualification
 
-[Deployment prerequisites and suspend policies](neon/docs/neon-production/README.md)
-cover provisioned storage, S3, independent controller metadata PostgreSQL,
-ComputeSpecs, TLS/SCRAM Secrets and connection routing. The default idle timeout
-is five minutes; selected databases can be configured never to suspend.
-Databases sharing a compute share its lifecycle.
+[Tenant setup, Kubernetes options, scaling and performance comparison](DEPLOY.md)
+covers the [Docker Compose stack](neon/packaging/compose/compose.yaml) and
+[Kubernetes/KEDA YAML](neon/packaging/kubernetes/keda/kustomization.yaml). Configure
+S3 and durable volumes, then declare a `NeonDatabase` with a size, tier and sleep
+policy. Authenticated webhooks and normal PostgreSQL connections signal demand.
+KEDA targets database/fleet resources; the controller drains WAL before stopping
+compute and verifies S3 durability before stopping the shared storage fleet.
+The proxy/controller and Kubernetes/KEDA control services remain available.
+Physical node-to-zero and the future `{project}.{tenant}.klustr.io` HTTP/SNI
+front door are separate platform integrations described in the deployment guide.
+This deployment support is newer than RC4 and requires the updated controller
+image built from this checkout; see the deployment guide for build/install commands.
 
 This RC is ready for integration and review. Production HA/fencing/recovery and
 near-native performance qualification remain open; see the
 [release notes](neon/RELEASE-NOTES.md) for measured limits. The images are not a
-complete storage provisioning operator. JSONB delta storage is not implemented.
+production HA storage operator. JSONB delta storage is not implemented.
 
 ## PostgreSQL documentation and licenses
 

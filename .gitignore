@@ -47,5 +47,6 @@ lib*.pc
 # Neon local credentials and source-build outputs
 /.env
 /.env.*
+/neon/packaging/compose/.env
 /build/
 /.pytest_cache/

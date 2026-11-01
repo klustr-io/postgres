@@ -1,0 +1,95 @@
+# Deployment source: neon/packaging/deploy/render.mjs
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    metadata:
+      name: neon-database-controller
+    rules:
+      - apiGroups:
+          - neon.klustr.io
+        resources:
+          - neondatabases
+          - neondatabases/status
+          - neonstoragefleets
+          - neonstoragefleets/status
+        verbs:
+          - get
+          - list
+          - watch
+          - create
+          - patch
+      - apiGroups:
+          - apps
+        resources:
+          - statefulsets
+        verbs:
+          - get
+          - list
+          - patch
+      - apiGroups:
+          - keda.sh
+        resources:
+          - scaledobjects
+        verbs:
+          - get
+          - list
+          - create
+          - patch
+      - apiGroups:
+          - ""
+        resources:
+          - configmaps
+        verbs:
+          - create
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: neon-database-controller
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: Role
+      name: neon-database-controller
+    subjects:
+      - kind: ServiceAccount
+        name: neon-tenant-controller
+        namespace: neon
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    metadata:
+      name: neon-keda-scale
+    rules:
+      - apiGroups:
+          - neon.klustr.io
+        resources:
+          - neondatabases
+          - neondatabases/scale
+          - neonstoragefleets
+          - neonstoragefleets/scale
+        verbs:
+          - get
+          - list
+          - watch
+          - update
+          - patch
+      - apiGroups:
+          - ""
+        resources:
+          - secrets
+        resourceNames:
+          - neon-keda-client-tls
+        verbs:
+          - get
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: neon-keda-scale
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: Role
+      name: neon-keda-scale
+    subjects:
+      - kind: ServiceAccount
+        name: keda-operator
+        namespace: keda

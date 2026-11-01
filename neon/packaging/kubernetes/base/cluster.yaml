@@ -1,0 +1,30 @@
+# Deployment source: neon/packaging/deploy/render.mjs
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: neon-cluster
+data:
+  cluster.yaml: |
+    name: neon
+    domain: db.local
+    computeImage: ghcr.io/klustr-io/neon-compute@sha256:c7d0b5e0a359941fb766253bd8e2b0f8fe6408a6fa855ebf0287070ef280abc8
+    clientCIDRs:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+      - 127.0.0.1/32
+    storage:
+      pageservers:
+        - id: 1
+          host: pageserver
+          zone: zone-1
+        - id: 2
+          host: pageserver-2
+          zone: zone-2
+    s3:
+      endpoint: https://s3.example.com
+      region: us-east-1
+      bucket: replace-me
+      prefix: neon/my-cluster
+    tenants: []
+    computeNode: replace-with-ready-amd64-node
