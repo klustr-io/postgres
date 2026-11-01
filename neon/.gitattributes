@@ -1,0 +1,4 @@
+# Preserve the imported runtime and licensed vendor snapshots byte-for-byte;
+# PostgreSQL's root whitespace rules target its native source conventions.
+runtime/** -whitespace
+vendor/** -whitespace linguist-vendored

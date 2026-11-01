@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "prefix": "/opt/neon-native",
+  "minimal_runtime": "gcr.io/distroless/base-nossl-debian12:nonroot@sha256:be40c00dfabd86576d92666e87e406714d5618342de1a0c213ad232de255172e",
+  "auxiliary_sources": [
+    {
+      "name": "libxml2-cmake-test-driver",
+      "archive": "run_and_diff.cmake",
+      "version": "2.15.4",
+      "url": "https://raw.githubusercontent.com/GNOME/libxml2/96498992efa48d52b0e8b83058bd88dbdaf153c1/run_and_diff.cmake",
+      "sha256": "f40cdbab613908006a554f586c96042663e85f762a07b702cc615339e80b20a3"
+    },
+    {
+      "name": "libxml2-catalog-test-driver",
+      "archive": "test_xmlcatalog_add_del.cmake",
+      "version": "2.15.4",
+      "url": "https://raw.githubusercontent.com/GNOME/libxml2/96498992efa48d52b0e8b83058bd88dbdaf153c1/test_xmlcatalog_add_del.cmake",
+      "sha256": "1339088a9235f15d9feb52453d6dcd18f726336c910d4ec8d80bae5824d680c7"
+    }
+  ],
+  "sources": [
+    {
+      "name": "zlib",
+      "version": "1.3.2",
+      "archive": "zlib-1.3.2.tar.xz",
+      "url": "https://zlib.net/zlib-1.3.2.tar.xz",
+      "sha256": "d7a0654783a4da529d1bb793b7ad9c3318020af77667bcae35f95d0e42a792f3"
+    },
+    {
+      "name": "libxml2",
+      "version": "2.15.4",
+      "archive": "libxml2-2.15.4.tar.xz",
+      "url": "https://download.gnome.org/sources/libxml2/2.15/libxml2-2.15.4.tar.xz",
+      "sha256": "98087fd181d9070724f3fbc65c7377db03038eb92bd882374daff44940138821"
+    },
+    {
+      "name": "libxslt",
+      "version": "1.1.45",
+      "archive": "libxslt-1.1.45.tar.xz",
+      "url": "https://download.gnome.org/sources/libxslt/1.1/libxslt-1.1.45.tar.xz",
+      "sha256": "9acfe68419c4d06a45c550321b3212762d92f41465062ca4ea19e632ee5d216e"
+    },
+    {
+      "name": "curl",
+      "version": "8.23.0",
+      "archive": "curl-8.23.0.tar.xz",
+      "url": "https://curl.se/download/curl-8.23.0.tar.xz",
+      "sha256": "8dadd7d2536a314f982ad05a651b713f426bf7d02cc2c76cffb9796f2218e6c5"
+    }
+  ],
+  "local_overrides": [
+    {
+      "path": "neon/vendor/native/zlib/gzwrite.c",
+      "sha256": "31d0da140edf382b82b13e2d87a22f59e158d9014ee026459e01cf437d0ab07d",
+      "upstream_commit": "df84af25dc1942490e1d1c899a07619152a46148"
+    }
+  ]
+}

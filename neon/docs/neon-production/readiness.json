@@ -1,0 +1,25 @@
+{
+  "status": "GITHUB-PUBLICATION-CANDIDATE",
+  "version": "18.6-rc.4",
+  "postgresql_major": 18,
+  "architecture": "amd64",
+  "production_qualified": false,
+  "application_interface": "Existing PostgreSQL SQL and JSONB",
+  "custom_document_api": "REMOVED",
+  "entrypoint": "node neon/build.mjs",
+  "workflow": "https://github.com/klustr-io/postgres/actions/workflows/neon-pg18-candidate.yml",
+  "release": "https://github.com/klustr-io/postgres/releases/tag/neon-v18.6-rc.4",
+  "local_source_validation": {
+    "postgresql_regressions": 231,
+    "protocol_authentication_tests": 4,
+    "focused_node_checks": 15,
+    "image_executable_smoke": 7
+  },
+  "github_validation": "See the current workflow run and published release manifest",
+  "remaining_gates": [
+    "Controller HA and cross-worker fencing/migration",
+    "Production storage failure domains and metadata recovery",
+    "Sustained-load RPO qualification",
+    "85% native performance target and transparent JSONB physical optimization"
+  ]
+}

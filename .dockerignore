@@ -1,0 +1,17 @@
+.git
+.env
+.env.*
+**/.env
+**/.env.*
+PROMPT.md
+neon/local
+neon/runtime/target
+neon/runtime/build
+build
+neon/dev/.env
+neon/dev/.venv
+neon/tests/reports
+**/__pycache__
+**/node_modules
+*.log
+*.jsonl

@@ -1,0 +1,24 @@
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+FROM node:24.19.0-bookworm-slim@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df AS build
+WORKDIR /app
+COPY neon/controller/tenant-compute/package.json neon/controller/tenant-compute/package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-fund --no-audit && npm cache clean --force
+COPY neon/controller/tenant-compute/*.mjs ./
+FROM gcr.io/distroless/base-nossl-debian12:nonroot@sha256:be40c00dfabd86576d92666e87e406714d5618342de1a0c213ad232de255172e AS minimal-base
+FROM build AS roots
+COPY --from=minimal-base / /minimal-base/
+COPY neon/packaging/neon/controller-rootfs.mjs /collector.mjs
+RUN node /collector.mjs
+FROM minimal-base
+ARG SOURCE_REVISION=uncommitted
+COPY --from=roots /rootfs/ /
+COPY --from=build /app/ /app/
+WORKDIR /app
+ENV NODE_ENV=production PATH=/usr/local/bin:/usr/bin:/bin
+USER 10001:10001
+STOPSIGNAL SIGTERM
+EXPOSE 8080 9090
+LABEL org.opencontainers.image.source="https://github.com/klustr-io/postgres" \
+      org.opencontainers.image.revision="${SOURCE_REVISION}" \
+      io.klustr.release-status="tenant-controller-integration-candidate"
+ENTRYPOINT ["/usr/local/bin/node", "/app/server.mjs"]

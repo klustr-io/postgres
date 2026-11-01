@@ -1,0 +1,148 @@
+name: Neon OCI images
+on:
+  pull_request:
+    branches: [REL_18_STABLE_neon, main]
+  push:
+    branches: [REL_18_STABLE_neon, main]
+    tags: ['neon-v18.*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish commit-tagged development images to GHCR
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: neon-images-${{ startsWith(github.ref, 'refs/tags/') && 'release' || github.ref }}
+  cancel-in-progress: false
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.19.0'
+      - name: Focused controller and storage-health checks
+        run: node --test neon/tests/neon/unit/*.test.mjs
+      - name: Build entry point syntax
+        run: |
+          node --check neon/build.mjs
+          node --check neon/publish.mjs
+  build:
+    if: github.event_name != 'pull_request'
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    env:
+      BUILD_JOBS: '4'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.19.0'
+      - name: Reclaim unused SDK space on the disposable runner
+        env:
+          HOSTED_RUNNER: ${{ runner.environment }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$HOSTED_RUNNER" = github-hosted
+          sudo rm -rf -- /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          available=$(df -Pk "$GITHUB_WORKSPACE" | awk 'NR==2 {print $4}')
+          test "$available" -ge 33554432 || { echo 'At least 32 GiB free disk is required'; exit 1; }
+          df -h "$GITHUB_WORKSPACE"
+      - uses: docker/setup-docker-action@7ec28a010822b4626af4874f9448a4b05ac6f3e5
+        with:
+          version: 'v29.7.2'
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        with:
+          version: 'v0.36.1'
+          driver-opts: image=moby/buildkit@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+          buildkitd-config-inline: |
+            [worker.oci]
+              max-parallelism = 4
+      - name: Select image version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            value="${GITHUB_REF_NAME#neon-v}"
+            [[ "$GITHUB_REF_NAME" == neon-v18.* ]]
+          else
+            value="sha-$GITHUB_SHA"
+          fi
+          [[ "$value" =~ ^[a-z0-9][a-z0-9_.-]{0,110}$ ]]
+          echo "value=$value" >> "$GITHUB_OUTPUT"
+      - name: Compile all seven images and run basic image checks
+        env:
+          IMAGE_VERSION: ${{ steps.version.outputs.value }}
+        run: node neon/build.mjs --version="$IMAGE_VERSION"
+      - name: Upload OCI images, source receipt and logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: neon-linux-amd64-${{ github.sha }}
+          path: |
+            build/monorepo-*/build.json
+            build/monorepo-*/*.log
+            build/monorepo-*/images/*.oci.tar
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error
+  publish:
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
+    concurrency:
+      group: neon-ghcr-publication
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.19.0'
+      - uses: docker/setup-docker-action@7ec28a010822b4626af4874f9448a4b05ac6f3e5
+        with:
+          version: 'v29.7.2'
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        with:
+          version: 'v0.36.1'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: neon-linux-amd64-${{ github.sha }}
+          path: build/incoming
+      - name: Publish verified images and release assets
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          IMAGE_VERSION: ${{ needs.build.outputs.version }}
+        run: node neon/publish.mjs --input=build/incoming --version="$IMAGE_VERSION"
+      - name: Retain registry digest manifest
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: neon-publication-${{ github.sha }}
+          path: |
+            build/published-release/release-manifest.json
+            build/published-release/SHA256SUMS
+            build/published-release/release-notes.md
+          if-no-files-found: warn
+      - name: Clear runner registry login
+        if: always()
+        run: docker logout ghcr.io

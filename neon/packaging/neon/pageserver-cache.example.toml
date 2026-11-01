@@ -1,0 +1,8 @@
+# Example startup-cache budget. Set basebackup_cache_enabled=true through the
+# tenant controller while preserving its other configuration. Size production
+# caches for the admitted tenant count and observed archive sizes.
+basebackup_cache_config = {cleanup_period="60s", max_total_size_bytes=67108864, max_size_entries=32, prepare_channel_size=16}
+
+# After closing write admission: drain, gracefully stop compute, wait for the
+# shutdown checkpoint's exact-LSN cache entry, then release compute resources.
+# Preparation is charged to sleep. A cache miss must reconstruct from storage.
