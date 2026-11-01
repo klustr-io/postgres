@@ -43,9 +43,14 @@ export class StorageFleet {
   }
   async demand() {
     this.leader.require();
-    if (this.pending || this.databases.backendWork || this.databases.pendingConnections?.size) return true;
+    if (this.pending || this.databases.backendWork || this.databases.recovery?.pending || this.databases.pendingConnections?.size) return true;
     const base=this.databases.base();
     for (const resource of this.databases.resources.values()) {
+      if (resource.status?.phase === 'Deleted') continue;
+      if (['suspended', 'retired'].includes(resource.spec.lifecycle)) {
+        if (resource.spec.deletionPolicy === 'Delete') return true;
+        continue;
+      }
       if (resource.metadata.deletionTimestamp) {if (resource.status?.replicas) return true; continue;}
       if (resource.spec.replicas === 1 || Date.parse(resource.status?.event?.until || '') > Date.now()) return true;
       let tenant; try {tenant = this.databases.tenant(resource, base);} catch {continue;}
@@ -74,7 +79,17 @@ export class StorageFleet {
       if (deployment?.spec.replicas) throw Error('Compute remains present');
       if ((await this.api.list('pods', 'neon.klustr.io/endpoint-uid=' + endpoint.uid)).length) throw Error('Compute Pod is still terminating');
       const spec = JSON.parse(secretText(await this.api.get('secrets', endpoint.computeSpecSecret), 'spec.json'));
-      known.set(spec.tenant_id, {timeline: spec.timeline_id, frontier: endpoint.status.drainedLSN || '0/0'});
+      const timelines = known.get(spec.tenant_id) || new Map();
+      if (this.databases.resources.get(endpoint.databaseResource)?.status?.phase === 'Deleted') continue;
+      timelines.set(spec.timeline_id, endpoint.status.drainedLSN || '0/0'); known.set(spec.tenant_id, timelines);
+    }
+    // Backups are native read-only timelines without compute endpoints.
+    if (this.databases.recovery) {
+      await this.databases.recovery.load();
+      for (const backup of this.databases.recovery.resources.values()) if (backup.status?.timelineId && backup.status.phase !== 'Deleted') {
+        const timelines = known.get(backup.status.tenantId) || new Map();
+        timelines.set(backup.status.timelineId, backup.status.lsn); known.set(backup.status.tenantId, timelines);
+      }
     }
     const tenants = await this.routing.request('GET', '/control/v1/tenant');
     if (!Array.isArray(tenants)) throw Error('Unknown storage inventory');
@@ -82,13 +97,16 @@ export class StorageFleet {
       const expected = known.get(tenant.tenant_id);
       if (!expected) throw Error('Unmanaged storage tenant prevents fleet shutdown');
       const timelines = await this.routing.request('GET', '/v1/tenant/' + tenant.tenant_id + '/timeline');
-      if (!Array.isArray(timelines) || timelines.some(timeline => timeline.timeline_id !== expected.timeline)) throw Error('Unmanaged timeline prevents fleet shutdown');
-      const state = await this.routing.request('GET', `/control/v1/tenant/${tenant.tenant_id}/timeline/${expected.timeline}`);
-      if (!state.shards?.length) throw Error('Missing storage durability state');
-      for (const shard of state.shards) {
-        if (!remoteDurable(shard,expected.frontier)) throw Object.assign(Error('Waiting for S3 upload'), {code: 'REMOTE_DURABILITY_PENDING'});
+      if (!Array.isArray(timelines) || timelines.some(timeline => !expected.has(timeline.timeline_id))) throw Error('Unmanaged timeline prevents fleet shutdown');
+      for (const timeline of timelines) {
+        const frontier = expected.get(timeline.timeline_id);
+        const state = await this.routing.request('GET', `/control/v1/tenant/${tenant.tenant_id}/timeline/${timeline.timeline_id}`);
+        if (!state.shards?.length) throw Error('Missing storage durability state');
+        for (const shard of state.shards) {
+          if (!remoteDurable(shard,frontier)) throw Object.assign(Error('Waiting for S3 upload'), {code: 'REMOTE_DURABILITY_PENDING'});
+        }
+        frontiers[tenant.tenant_id + ':' + timeline.timeline_id] = frontier;
       }
-      frontiers[tenant.tenant_id] = expected.frontier;
     }
     return frontiers;
   }

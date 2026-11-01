@@ -35,7 +35,8 @@ function scram(password) {
 }
 function certificate(name, dns, usage = 'serverAuth') {
   const run = args => execFileSync('/usr/bin/openssl', args, {cwd: state, stdio: ['ignore', 'ignore', 'pipe']});
-  run(['req', '-new', '-newkey', 'rsa:2048', '-nodes', '-keyout', name + '.key', '-out', name + '.csr', '-subj', '/CN=' + dns[0]]);
+  // Service FQDNs can exceed the X.509 common-name limit; identity is in SAN.
+  run(['req', '-new', '-newkey', 'rsa:2048', '-nodes', '-keyout', name + '.key', '-out', name + '.csr', '-subj', '/CN=Neon service']);
   write(name + '.ext', 'subjectAltName=' + dns.map(value => 'DNS:' + value).join(',') + '\nextendedKeyUsage=' + usage + '\nbasicConstraints=CA:FALSE\n');
   run(['x509', '-req', '-in', name + '.csr', '-CA', 'ca.crt', '-CAkey', 'ca.key', '-set_serial', '0x' + randomBytes(16).toString('hex'),
     '-out', name + '.crt', '-days', '365', '-extfile', name + '.ext']);
@@ -72,8 +73,8 @@ async function initialize() {
       '-addext', 'basicConstraints=critical,CA:TRUE', '-addext', 'keyUsage=critical,keyCertSign,cRLSign'], {stdio: ['ignore', 'ignore', 'pipe']});
   }
   for (const [name, dns] of [['controller', [...new Set([host.controller, 'neon-controller'])]], ['proxy', ['*.' + config.domain]]])
-    if (!fs.existsSync(path.join(state, name + '.key'))) certificate(name, dns);
-  if (!fs.existsSync(path.join(state, 'keda-client.key'))) certificate('keda-client', ['neon-keda'], 'clientAuth');
+    if (!fs.existsSync(path.join(state, name + '.key')) || !fs.existsSync(path.join(state, name + '.crt'))) certificate(name, dns);
+  if (!fs.existsSync(path.join(state, 'keda-client.key')) || !fs.existsSync(path.join(state, 'keda-client.crt'))) certificate('keda-client', ['neon-keda'], 'clientAuth');
   for (const name of ['metadata-password', 'controller-token', 'management-token'])
     if (!fs.existsSync(path.join(state, name))) write(name, randomBytes(32).toString('hex'));
   write('admin.jwt', jwt(key, 'admin')); write('pageserver.jwt', jwt(key, 'pageserverapi'));
@@ -100,6 +101,8 @@ remote_storage=${remote('pageserver')}
   for (const tenant of process.env.NEON_INITIALIZE_ONLY === 'true' ? [] : config.tenants) {
     const dir = 'tenants/' + tenant.endpointId;
     if (api) {
+      const client = await api.optional('secrets', tenant.name + '-client');
+      if (!client && await api.optional('secrets', tenant.name + '-roles')) throw Object.assign(Error('Existing verifier has no matching client credential; restore its client Secret'), {code: 'CREDENTIALS_INCOMPLETE'});
       for (const [secretName, files] of [[tenant.name + '-client', {password: 'password'}],
         [tenant.name + '-admin', {'admin.json': 'admin.json'}], [tenant.name + '-roles', {'roles.json': 'roles.json'}],
         [tenant.name + '-compute-spec', {'spec.json': 'spec.json'}],
@@ -114,7 +117,7 @@ remote_storage=${remote('pageserver')}
       write(dir + '/password', randomBytes(24).toString('hex'));
       write(dir + '/admin-password', randomBytes(24).toString('hex'));
     }
-    if (!fs.existsSync(path.join(state, dir, 'tls.key'))) certificate(dir + '/tls', [host.compute(tenant.endpointId)]);
+    if (!fs.existsSync(path.join(state, dir, 'tls.key')) || !fs.existsSync(path.join(state, dir, 'tls.crt'))) certificate(dir + '/tls', [host.compute(tenant.endpointId)]);
     write(dir + '/ca.crt', read('ca.crt'));
     const verifier = fs.existsSync(path.join(state, dir, 'roles.json')) ? JSON.parse(read(dir + '/roles.json'))[tenant.user] : scram(read(dir + '/password'));
     if (!verifier) throw Error('Changing an existing tenant role requires explicit credential migration');
@@ -135,11 +138,13 @@ remote_storage=${remote('pageserver')}
     write(dir + '/roles.json', {[tenant.user]: verifier});
     write(dir + '/config.json', {spec: renderSpec(spec, tenant), compute_ctl_config: {jwks: {keys: []}, tls: null}});
     if (api) {
+      // Persist the matching client password before any verifier/spec Secrets.
+      // A partial first run must not invent a password for an existing verifier.
+      await secret(tenant.name + '-client', {password: read(dir + '/password'), user: tenant.user, database: tenant.database});
       await secret(tenant.name + '-compute-spec', {'spec.json': JSON.stringify(spec)}, false);
       await secret(tenant.name + '-admin', {'admin.json': read(dir + '/admin.json')});
       await secret(tenant.name + '-roles', {'roles.json': read(dir + '/roles.json')});
       await secret(tenant.name + '-compute-tls', {'tls.crt': read(dir + '/tls.crt'), 'tls.key': read(dir + '/tls.key')});
-      await secret(tenant.name + '-client', {password: read(dir + '/password'), user: tenant.user, database: tenant.database});
     }
   }
   if (api) {
@@ -212,14 +217,18 @@ async function provision() {
     });
     else {
       await request('PATCH', '/v1/tenant/config', {tenant_id: tenant.tenantId, checkpoint_timeout: tenant.storagePolicy.checkpoint_timeout,
-        timeline_get_throttle: tenant.storagePolicy.timeline_get_throttle});
+        pitr_interval: tenant.storagePolicy.pitr_interval, timeline_get_throttle: tenant.storagePolicy.timeline_get_throttle});
       await request('PUT', '/control/v1/tenant/' + tenant.tenantId + '/policy', {placement: tenant.storagePolicy.placement_policy});
     }
     await retry(async () => {
       const timelines = await request('GET', '/v1/tenant/' + tenant.tenantId + '/timeline');
       const rows = await timelines.json();
-      if (!Array.isArray(rows) || !rows.some(row => row.timeline_id === tenant.timelineId))
-        await request('POST', '/v1/tenant/' + tenant.tenantId + '/timeline', {new_timeline_id: tenant.timelineId, pg_version: 18});
+      if (!Array.isArray(rows)) throw Error('Invalid timeline inventory');
+      const existing = rows.find(row => row.timeline_id === tenant.timelineId);
+      if (!existing) await request('POST', '/v1/tenant/' + tenant.tenantId + '/timeline', {new_timeline_id: tenant.timelineId, pg_version: 18,
+        ...(tenant.ancestorTimelineId ? {ancestor_timeline_id: tenant.ancestorTimelineId, ancestor_start_lsn: tenant.ancestorLSN} : {})});
+      else if (tenant.ancestorTimelineId && (existing.ancestor_timeline_id !== tenant.ancestorTimelineId ||
+          existing.ancestor_lsn?.toUpperCase() !== tenant.ancestorLSN.toUpperCase())) throw Error('Existing branch ancestry differs');
     });
     const locate = await (await request('GET', '/debug/v1/tenant/' + tenant.tenantId + '/locate')).json();
     const currentShards = locate.shard_params.count || 1;

@@ -78,8 +78,9 @@ release below. This installs cluster-scoped CRDs/RBAC and needs cluster-admin:
 ```sh
 kubectl --context YOUR_CONTEXT apply --server-side -f https://github.com/kedacore/keda/releases/download/v2.21.0/keda-2.21.0.yaml
 kubectl --context YOUR_CONTEXT apply -f neon/packaging/kubernetes/keda/database-crd.yaml
+kubectl --context YOUR_CONTEXT apply -f neon/packaging/kubernetes/keda/backup-crd.yaml
 kubectl --context YOUR_CONTEXT apply -f neon/packaging/kubernetes/keda/fleet-crd.yaml
-kubectl --context YOUR_CONTEXT wait --for=condition=Established crd/neondatabases.neon.klustr.io crd/neonstoragefleets.neon.klustr.io --timeout=60s
+kubectl --context YOUR_CONTEXT wait --for=condition=Established crd/neondatabases.neon.klustr.io crd/neonbackups.neon.klustr.io crd/neonstoragefleets.neon.klustr.io --timeout=60s
 ```
 
 Create a private env file containing `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
@@ -209,6 +210,112 @@ replicas. A second target, `NeonStorageFleet`, governs shared storage. Do not po
 HPA/KEDA directly at the generated compute or storage Deployments/StatefulSets.
 The proxy can authenticate a normal PostgreSQL connection while storage sleeps,
 then signal demand and await the full dependency chain.
+
+## Suspend, resume and delete
+
+These management operations use the same authenticated HTTPS API above. They are
+asynchronous: 202 means accepted; poll `GET /v1/databases/<name>` for completion.
+
+For example, with `NEON_API`, `NEON_CA` and a management token supplied securely:
+
+```sh
+curl --fail-with-body --cacert "$NEON_CA" -H "Authorization: Bearer $NEON_MANAGEMENT_TOKEN" -X POST "$NEON_API/v1/databases/events/suspend"
+curl --fail-with-body --cacert "$NEON_CA" -H "Authorization: Bearer $NEON_MANAGEMENT_TOKEN" -X POST "$NEON_API/v1/databases/events/resume"
+```
+
+| Request | Behavior |
+|---|---|
+| `POST /v1/databases/events/suspend` | Drain safely and enter `Suspended`; block connection/event wake, including for an always-on database. |
+| `POST /v1/databases/events/resume` | Permit wake again, preserving the configured idle/never policy. |
+| `DELETE /v1/databases/events` with `{}` | Retire the endpoint and retain its timeline, credentials and history within configured retention. Completion is `Retained`. |
+| `DELETE /v1/databases/events` with `{"mode":"purge","confirm":"events"}` | Retire, drain and permanently delete its native storage. Completion is `Deleted`. |
+
+Active queries and transactions defer stopping; there is no unsafe force-kill
+option. Purge requires the exact resource name and refuses dependent branches or
+backups. Delete those dependencies first. A retired name remains a tombstone and
+cannot be resumed or reused through PUT; clone retained data to a new name instead.
+Deployment credentials/PVCs are retained; purge deletes the tenant or branch
+through the storage controller, never a shared bucket or another database.
+
+The YAML equivalents are `spec.lifecycle: suspended` or `active`; retirement is
+`lifecycle: retired`, `replicas: 0`, `deletionPolicy: Retain` (or explicitly `Delete`).
+Ordinary `kubectl delete neondb` retains data behind a finalizer; do not remove it
+to bypass recovery/dependency safeguards. Inspect status before final cleanup.
+
+## History, backups and branches
+
+This follows Neon's distinction between [retained history](https://neon.com/docs/postgres/backup-restore/history-window)
+and [backup strategies](https://neon.com/docs/postgres/backup-restore/backups).
+Native timelines provide copy-on-write branches and snapshots without application
+SQL changes. A snapshot shares the primary S3 storage and ancestry; it is not an
+independent `pg_dump` export or disaster-recovery copy.
+
+Configure a root database through PUT or its Kubernetes spec:
+
+```yaml
+backup:
+  historySeconds: 604800     # Seven-day PITR window; default, maximum 30 days
+  scheduleSeconds: 86400    # Daily native snapshot; default 0 disables scheduling
+  retentionSeconds: 2592000 # Keep each scheduled snapshot for 30 days
+```
+
+`historySeconds` sets the native tenant `pitr_interval`. Increasing it cannot
+recover already collected history; decreasing it makes older unpinned history
+eligible for garbage collection. Zero disables the time-based history guarantee.
+GC and snapshot expiry run when services/controller are available, so actual
+deletion can lag the policy. Inspect `GET /v1/databases/events/history` for the
+current shard frontiers and oldest readable LSNs; this request can wake storage.
+
+Schedules have a minimum five-minute interval, use UTC time slots and coalesce
+missed slots into a current snapshot. Enabling schedules can periodically wake the
+storage fleet even without application traffic. Retention starts at snapshot
+creation; changing the policy affects future snapshots. Expired snapshots with
+dependent branches remain pinned and report `DEPENDENT_BRANCHES`.
+
+```text
+POST /v1/databases/events/backups
+{"name":"before-migration","retentionSeconds":604800}
+
+GET /v1/databases/events/backups
+GET /v1/backups/before-migration
+
+POST /v1/databases/events/branches
+{"name":"preview","size":"micro"}
+
+POST /v1/databases/events/branches
+{"name":"restored","backup":"before-migration","size":"small"}
+
+POST /v1/databases/events/branches
+{"name":"at-time","timestamp":"2026-11-01T10:00:00Z"}
+
+DELETE /v1/backups/before-migration
+```
+
+Snapshot creation returns 202; wait for `NeonBackup.status.phase: Ready` before
+restoring. Completion verifies the snapshot's generation-validated remote frontier.
+Clone defaults to the current WAL frontier and waits for storage catch-up. An
+explicit `lsn` can replace `timestamp`; specify only one of `backup`, `lsn`, or
+`timestamp`. Missing/pruned history fails rather than substituting another point.
+Native all-shard leases protect the selected point during branch creation.
+
+Clone/restore creates a **new writable database resource and endpoint**, leaving
+the source unchanged. Use `GET /v1/databases/restored` for its endpoint and client
+Secret. Existing schema, data and SQL roles are copied; the managed client and
+lifecycle role get distinct credentials for the new endpoint. Audit inherited
+roles before exposing a production clone. Branching copies the entire PostgreSQL
+timeline, including any additional SQL databases, rather than selected tables.
+
+Branches can choose their compute size and suspend policy. They share the root's
+storage tenant, tier, shard count and history policy; configure these on the root.
+A declarative branch uses `spec.branchFrom: {database: events, backup: before-migration}`
+with the normal size/tier fields. Branch source is immutable. Inspect resources
+with `kubectl -n neon get neondb,neonbackups`.
+
+These APIs are available in the Kubernetes KEDA deployment. Compose currently
+supports the native history configuration but does not run the branch/snapshot
+management controller. Independent exports with `pg_dump`/`pg_restore`, off-site
+copies, and backup of the metadata database and Kubernetes Secrets remain operator
+responsibilities. No destructive in-place rewind/reset or branch merge is exposed.
 
 ## Connect
 

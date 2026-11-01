@@ -35,7 +35,7 @@ export class Kubernetes {
   path(kind,name=''){
     const prefixes={configmaps:'/api/v1',secrets:'/api/v1',services:'/api/v1',pods:'/api/v1',
       deployments:'/apis/apps/v1',statefulsets:'/apis/apps/v1',leases:'/apis/coordination.k8s.io/v1',endpointslices:'/apis/discovery.k8s.io/v1',
-      neondatabases:'/apis/neon.klustr.io/v1alpha1',neonstoragefleets:'/apis/neon.klustr.io/v1alpha1',scaledobjects:'/apis/keda.sh/v1alpha1',triggerauthentications:'/apis/keda.sh/v1alpha1'};
+      neondatabases:'/apis/neon.klustr.io/v1alpha1',neonbackups:'/apis/neon.klustr.io/v1alpha1',neonstoragefleets:'/apis/neon.klustr.io/v1alpha1',scaledobjects:'/apis/keda.sh/v1alpha1',triggerauthentications:'/apis/keda.sh/v1alpha1'};
     if(!prefixes[kind]||name&&!/^[a-z0-9][a-z0-9.-]{0,252}$/.test(name))throw Error('Invalid resource path');
     return `${prefixes[kind]}/namespaces/${this.namespace}/${kind}${name?'/'+name:''}`;
   }

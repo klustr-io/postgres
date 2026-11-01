@@ -30,13 +30,13 @@ test('Selecting a larger size updates CPU, memory and PostgreSQL buffers togethe
 });
 test('Quiet SQL does not bypass the KEDA cooldown or repeatedly stop a desired running database', async () => {
   const databases = manager(); let stops = 0;
-  databases.api.get = async () => ({metadata: {generation: 1}, spec: {replicas: 1, size: 'small', tier: 'shared'}});
+  databases.api.get = async () => ({metadata: {name: 'events', generation: 1}, spec: {replicas: 1, size: 'small', tier: 'shared'}});
   databases.api.optional = async () => ({spec: {replicas: 1, template: {metadata: {annotations: {'neon.klustr.io/config-revision': 'current'}}}}});
   databases.lifecycle.sampleDemand = async () => false; databases.lifecycle.suspend = async () => {stops++;};
   databases.demand = async () => false; databases.status = async () => {};
   const endpoint = {databaseResource: 'events', name: 'neon-ep-events', size: 'small', tier: 'shared', computeRevision: 'current', status: {phase: 'Active'}};
   await databases.endpoint(endpoint); assert.equal(stops, 0);
-  databases.api.get = async () => ({metadata: {generation: 2}, spec: {replicas: 0, size: 'small', tier: 'shared'}});
+  databases.api.get = async () => ({metadata: {name: 'events', generation: 2}, spec: {replicas: 0, size: 'small', tier: 'shared'}});
   await databases.endpoint(endpoint); assert.equal(stops, 1);
 });
 test('External scaler speaks the KEDA gRPC protocol and pushes demand changes', async t => {

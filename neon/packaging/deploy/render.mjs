@@ -166,6 +166,18 @@ output('../kubernetes/base/kustomization.yaml', {apiVersion: 'kustomize.config.k
   resources: ['namespace.yaml', 'cluster.yaml', 'bootstrap.yaml', 'storage.yaml', 'controller.yaml']});
 
 const databaseSchema = {type: 'object', required: ['size', 'tier'], properties: {
+  lifecycle: {type: 'string', enum: ['active', 'suspended', 'retired'], default: 'active'},
+  deletionPolicy: {type: 'string', enum: ['Retain', 'Delete'], default: 'Retain'},
+  backup: {type: 'object', 'x-kubernetes-validations': [
+    {rule: 'self.scheduleSeconds == 0 || (self.scheduleSeconds >= 300 && self.retentionSeconds >= self.scheduleSeconds)', message: 'Schedule must be at least five minutes and fit retention'}], properties: {
+    historySeconds: {type: 'integer', minimum: 0, maximum: 2592000, default: 604800},
+    scheduleSeconds: {type: 'integer', minimum: 0, maximum: 2592000, default: 0},
+    retentionSeconds: {type: 'integer', minimum: 300, maximum: 31536000, default: 604800}}},
+  branchFrom: {type: 'object', required: ['database'], properties: {
+    database: {type: 'string', pattern: '^[a-z][a-z0-9-]{0,38}$'},
+    backup: {type: 'string', pattern: '^[a-z][a-z0-9-]{0,38}$'},
+    lsn: {type: 'string', pattern: '^[0-9A-Fa-f]{1,8}/[0-9A-Fa-f]{1,8}$'},
+    timestamp: {type: 'string', format: 'date-time'}}},
   replicas: {type: 'integer', minimum: 0, maximum: 1, default: 0},
   database: {type: 'string', pattern: '^[a-z][a-z0-9_]{0,62}$', default: 'app', 'x-kubernetes-validations': [{rule: 'self == oldSelf', message: 'Database name is immutable'}]},
   user: {type: 'string', pattern: '^[a-z][a-z0-9_]{0,62}$', default: 'app_user', 'x-kubernetes-validations': [{rule: 'self == oldSelf', message: 'Database role is immutable'}]},
@@ -177,7 +189,13 @@ const databaseSchema = {type: 'object', required: ['size', 'tier'], properties: 
     mode: {type: 'string', enum: ['idle', 'never'], default: 'idle'}, idleSeconds: {type: 'integer', minimum: 1, maximum: 604800, default: 300}}},
   databasePolicies: {type: 'object', additionalProperties: {type: 'object', properties: {
     mode: {type: 'string', enum: ['idle', 'never']}, idleSeconds: {type: 'integer', minimum: 1, maximum: 604800}}}}
-}};
+}, 'x-kubernetes-validations': [
+  {rule: '!has(oldSelf.branchFrom) ? !has(self.branchFrom) : has(self.branchFrom) && self.branchFrom == oldSelf.branchFrom', message: 'Branch source is immutable'},
+  {rule: 'self.lifecycle != "retired" || oldSelf.lifecycle == "retired" || self.replicas == 0', message: 'Retirement stops compute'},
+  {rule: 'oldSelf.lifecycle != "retired" || self.lifecycle == "retired"', message: 'Retired names cannot be reused'},
+  {rule: 'self.deletionPolicy != "Delete" || self.lifecycle == "retired"', message: 'Delete requires retirement'},
+  {rule: '!has(self.branchFrom) || !has(self.backup)', message: 'Branches inherit root history policy'}
+]};
 output('../kubernetes/keda/database-crd.yaml', {apiVersion: 'apiextensions.k8s.io/v1', kind: 'CustomResourceDefinition', metadata: {name: 'neondatabases.neon.klustr.io'}, spec: {
   group: 'neon.klustr.io', scope: 'Namespaced', names: {kind: 'NeonDatabase', plural: 'neondatabases', singular: 'neondatabase', shortNames: ['neondb']},
   versions: [{name: 'v1alpha1', served: true, storage: true, subresources: {status: {}, scale: {
@@ -186,9 +204,18 @@ output('../kubernetes/keda/database-crd.yaml', {apiVersion: 'apiextensions.k8s.i
       {name: 'Phase', type: 'string', jsonPath: '.status.phase'}, {name: 'Replicas', type: 'integer', jsonPath: '.status.replicas'}],
     schema: {openAPIV3Schema: {type: 'object', properties: {spec: databaseSchema,
       status: {type: 'object', 'x-kubernetes-preserve-unknown-fields': true, properties: {replicas: {type: 'integer'}, selector: {type: 'string'}}}}}}}]}});
+output('../kubernetes/keda/backup-crd.yaml', {apiVersion: 'apiextensions.k8s.io/v1', kind: 'CustomResourceDefinition', metadata: {name: 'neonbackups.neon.klustr.io'}, spec: {
+  group: 'neon.klustr.io', scope: 'Namespaced', names: {kind: 'NeonBackup', plural: 'neonbackups', singular: 'neonbackup', shortNames: ['neonbackup']},
+  versions: [{name: 'v1alpha1', served: true, storage: true, subresources: {status: {}},
+    additionalPrinterColumns: [{name: 'Database', type: 'string', jsonPath: '.spec.database'}, {name: 'Phase', type: 'string', jsonPath: '.status.phase'}, {name: 'Expires', type: 'string', jsonPath: '.status.expiresAt'}],
+    schema: {openAPIV3Schema: {type: 'object', properties: {spec: {type: 'object', required: ['database', 'databaseUID', 'retentionSeconds'],
+      'x-kubernetes-validations': [{rule: 'self == oldSelf', message: 'Backup identity and retention are immutable'}], properties: {
+        database: {type: 'string', pattern: '^[a-z][a-z0-9-]{0,38}$'}, databaseUID: {type: 'string', minLength: 1, maxLength: 128},
+        retentionSeconds: {type: 'integer', minimum: 300, maximum: 31536000}}}, status: {type: 'object', 'x-kubernetes-preserve-unknown-fields': true}}}}}]}});
 output('../kubernetes/keda/rbac.yaml', {apiVersion: 'v1', kind: 'List', items: [
   {apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'Role', metadata: {name: 'neon-database-controller'}, rules: [
     {apiGroups: ['neon.klustr.io'], resources: ['neondatabases', 'neondatabases/status', 'neonstoragefleets', 'neonstoragefleets/status'], verbs: ['get', 'list', 'watch', 'create', 'patch']},
+    {apiGroups: ['neon.klustr.io'], resources: ['neonbackups', 'neonbackups/status'], verbs: ['get', 'list', 'create', 'patch', 'delete']},
     {apiGroups: ['apps'], resources: ['statefulsets'], verbs: ['get', 'list', 'patch']},
     {apiGroups: ['keda.sh'], resources: ['scaledobjects'], verbs: ['get', 'list', 'create', 'patch']},
     {apiGroups: [''], resources: ['configmaps'], verbs: ['create']}]},
@@ -242,7 +269,7 @@ const fleetPatches = storage.filter(resource => ['Deployment', 'StatefulSet'].in
     {op: 'add', path: '/spec/template/metadata/labels/neon.klustr.io~1storage-fleet', value: 'storage'}])
 }));
 output('../kubernetes/keda/kustomization.yaml', {apiVersion: 'kustomize.config.k8s.io/v1beta1', kind: 'Kustomization', namespace: ns,
-  resources: ['../base', 'database-crd.yaml', 'fleet-crd.yaml', 'fleet.yaml', 'rbac.yaml', 'trigger-authentication.yaml', 'network-policy.yaml'],
+  resources: ['../base', 'database-crd.yaml', 'backup-crd.yaml', 'fleet-crd.yaml', 'fleet.yaml', 'rbac.yaml', 'trigger-authentication.yaml', 'network-policy.yaml'],
   patches: [{path: 'controller-patch.yaml'}, {path: 'service-patch.yaml'}, {path: 'init-patch.yaml'}, {path: 'provision-patch.yaml'}, ...fleetPatches]});
 output('../kubernetes/examples/database.yaml', {apiVersion: 'neon.klustr.io/v1alpha1', kind: 'NeonDatabase', metadata: {name: 'events', namespace: ns},
   spec: {database: 'app', size: 'small', tier: 'shared', suspend: {mode: 'idle', idleSeconds: 300}}});

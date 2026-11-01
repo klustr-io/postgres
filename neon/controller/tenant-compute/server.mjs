@@ -24,6 +24,8 @@ const storage=process.env.NEON_DEPLOYMENT_CONFIG?new (await import('./deploy/rou
 const fleet=databases&&process.env.NEON_FLEET_SCALE_TO_ZERO==='true'?new (await import('./deploy/fleet.mjs')).StorageFleet({api,leader,databases,
   routing:storage,getEndpoints:()=>endpoints,emit}):null;
 if(fleet)databases.fleet=fleet;
+const recovery=databases?new (await import('./deploy/recovery.mjs')).Recovery({databases,routing:storage,api,leader,lifecycle,getEndpoints:()=>endpoints,emit}):null;
+if(databases){databases.recovery=recovery;lifecycle.wakeGuard=endpoint=>endpoint.databaseResource?databases.assertAvailable(endpoint.databaseResource):undefined;}
 let scaler=null;
 let stopDatabaseWatch=null;
 async function refresh(){
@@ -40,6 +42,7 @@ async function poll(){
   try{
     if(fleet)void fleet.reconcile();
     if(databases)void databases.reconcile();
+    if(recovery)void recovery.reconcile();
     await refresh();
     for(const uid of lifecycle.activity.keys())
       if(!leader.active||![...endpoints.values()].some(endpoint=>endpoint.uid===uid))await lifecycle.closeActivity({uid});
@@ -72,16 +75,52 @@ const server=https.createServer({key:fs.readFileSync(process.env.CONTROLLER_TLS_
   if(stopping||inFlight>=32)return respond(response,503,{error:'Control plane busy'});
   inFlight++;
   try{
-    const management=request.url.match(/^\/v1\/databases\/([a-z][a-z0-9-]{0,38})(\/events)?$/);
+    const backupRoute=request.url.match(/^\/v1\/backups\/([a-z][a-z0-9-]{0,38})$/);
+    if(recovery&&backupRoute){
+      if(!authorized(request,process.env.NEON_MANAGEMENT_TOKEN_FILE||'/run/management/token'))return respond(response,401,{error:'Unauthorized'});
+      leader.require();const name=backupRoute[1],resource=await api.get('neonbackups',name);
+      if(request.method==='GET')return respond(response,200,{name,spec:resource.spec,status:resource.status||{phase:'Pending'}});
+      if(request.method==='DELETE'){
+        await api.request('DELETE',api.path('neonbackups',name),{preconditions:{uid:resource.metadata.uid}});
+        return respond(response,202,{name,accepted:true});
+      }
+      return respond(response,405,{error:'Unsupported backup operation'});
+    }
+    const management=request.url.match(/^\/v1\/databases\/([a-z][a-z0-9-]{0,38})(?:\/(events|suspend|resume|branches|backups|history))?$/);
     if(databases&&management){
       if(!authorized(request,process.env.NEON_MANAGEMENT_TOKEN_FILE||'/run/management/token'))return respond(response,401,{error:'Unauthorized'});
       leader.require();
       const name=management[1];
+      if(request.method==='GET'&&management[2]==='history')return respond(response,200,await recovery.history(name));
       if(request.method==='PUT'&&!management[2]){
         try{const resource=await databases.put(name,await body(request));void databases.reconcile();return respond(response,202,{name,generation:resource.metadata.generation});}
         catch(error){if(error.code==='INVALID_SPEC'||error.status===422)return respond(response,422,{error:'Invalid database specification'});throw error;}
       }
-      if(request.method==='POST'&&management[2]){await databases.event(name,await body(request));return respond(response,202,{name,accepted:true});}
+      if(request.method==='POST'&&management[2]==='events'){await databases.event(name,await body(request));return respond(response,202,{name,accepted:true});}
+      if(request.method==='POST'&&['suspend','resume'].includes(management[2])){
+        await databases.operation(name,management[2]);void poll();return respond(response,202,{name,accepted:true});
+      }
+      if(request.method==='DELETE'&&!management[2]){
+        await databases.operation(name,'delete',await body(request));void poll();return respond(response,202,{name,accepted:true});
+      }
+      if(request.method==='GET'&&management[2]==='backups'){
+        await recovery.load();return respond(response,200,{backups:[...recovery.resources.values()].filter(row=>row.spec.database===name).map(row=>({name:row.metadata.name,spec:row.spec,status:row.status||{phase:'Pending'}}))});
+      }
+      if(request.method==='POST'&&management[2]==='backups'){
+        const input=await body(request);
+        if(Object.keys(input).some(key=>!['name','retentionSeconds'].includes(key)))return respond(response,422,{error:'Invalid backup specification'});
+        const resource=await recovery.create(name,input.name,{retentionSeconds:input.retentionSeconds});void recovery.reconcile();
+        return respond(response,202,{name:resource.metadata.name,accepted:true});
+      }
+      if(request.method==='POST'&&management[2]==='branches'){
+        const input=await body(request);
+        if(Object.keys(input).some(key=>!['name','backup','lsn','timestamp','size','suspend','profile','allowedIps'].includes(key)))return respond(response,422,{error:'Invalid branch specification'});
+        await databases.load();const source=recovery.source(name),parent=source.tenant;
+        const spec={database:parent.database,user:parent.user,size:input.size||parent.size,tier:parent.tier,shards:parent.shards,
+          profile:input.profile||parent.profile,suspend:input.suspend||parent.suspend,allowedIps:input.allowedIps||parent.allowedIps,
+          branchFrom:{database:name,...Object.fromEntries(['backup','lsn','timestamp'].filter(key=>input[key]!==undefined).map(key=>[key,input[key]]))}};
+        const resource=await databases.put(input.name,spec);void databases.reconcile();return respond(response,202,{name:resource.metadata.name,accepted:true});
+      }
       if(request.method==='GET'&&!management[2]){const resource=await api.get('neondatabases',name);return respond(response,200,{name,spec:resource.spec,status:resource.status||{phase:'Pending'}});}
       return respond(response,405,{error:'Unsupported database operation'});
     }
@@ -118,6 +157,9 @@ const server=https.createServer({key:fs.readFileSync(process.env.CONTROLLER_TLS_
     if(url.pathname===`/endpoints/${id}/jwks`)return respond(response,200,{jwks:[]});
     return respond(response,404,{error:'Unknown API method'});
   }catch(error){
+    if(error.status===404)return respond(response,404,{error:'Resource not found'});
+    if(error.code==='INVALID_SPEC')return respond(response,422,{error:error.code});
+    if(['DATABASE_SUSPENDED','DATABASE_RETIRED','PURGE_CONFIRMATION_REQUIRED','DEPENDENT_BRANCHES_OR_BACKUPS','IMMUTABLE_BRANCH_SOURCE','BACKUP_NAME_CONFLICT','SOURCE_NOT_READY'].includes(error.code))return respond(response,409,{error:error.code});
     events.errors++;emit('request_deferred',{reason:error.code||'OPERATION_FAILED'});
     return respond(response,503,{error:'Endpoint temporarily unavailable',status:{code:'UNAVAILABLE',message:'Retry request',
       details:{error_info:{reason:'RUNNING_OPERATIONS'},retry_info:{retry_delay_ms:250}}}});

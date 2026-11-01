@@ -35,8 +35,8 @@ export class StorageRouting {
   async notify(type, value) {
     this.leader.require();
     const config = await this.getConfig();
-    const tenant = config.tenants.find(row => row.tenantId === value?.tenant_id && (type !== 'safekeepers' || row.timelineId === value.timeline_id));
-    if (!tenant) throw Error('Notification for unknown tenant');
+    const tenants = config.tenants.filter(row => row.tenantId === value?.tenant_id && (type !== 'safekeepers' || row.timelineId === value.timeline_id));
+    if (!tenants.length) throw Error('Notification for unknown tenant');
     const updates = {};
     if (type === 'attach') {
       if (!Array.isArray(value.shards) || !value.shards.length || value.shards.length > 32) throw Error('Invalid placement notification');
@@ -58,6 +58,7 @@ export class StorageRouting {
       });
       updates.safekeepers_generation = value.generation;
     }
+    for (const tenant of tenants) {
     const endpoint = [...this.getEndpoints().values()].find(endpoint => endpoint.endpointId === tenant.endpointId);
     const apply = async () => {
       this.leader.require();
@@ -99,7 +100,8 @@ export class StorageRouting {
         throw Error('Storage settings have not reloaded');
       } finally {await client.end();}
     };
-    if (endpoint) return this.lifecycle.serialized(endpoint, apply);
-    return apply();
+    if (endpoint) await this.lifecycle.serialized(endpoint, apply);
+    else await apply();
+    }
   }
 }

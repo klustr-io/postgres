@@ -5,6 +5,7 @@ namespace: neon
 resources:
   - ../base
   - database-crd.yaml
+  - backup-crd.yaml
   - fleet-crd.yaml
   - fleet.yaml
   - rbac.yaml

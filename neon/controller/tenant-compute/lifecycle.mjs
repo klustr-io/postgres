@@ -131,6 +131,7 @@ export class Lifecycle {
     }finally{await client.end();}
   }
   async wake(endpoint){return await this.serialized(endpoint,async()=>{
+    await this.wakeGuard?.(endpoint);
     const cached=this.readyCache.get(endpoint.uid);
     if(cached&&cached.revision===endpoint.revision&&cached.expires>this.clock()){
       this.idleSince.set(endpoint.uid,this.clock());return cached.result;
@@ -163,6 +164,7 @@ export class Lifecycle {
       try{await this.verify(endpoint,pods[0]);return pods[0];}catch{return null;}
     });
     if(pod.spec.nodeName!==endpoint.nodeName)throw Error('Compute worker placement changed');
+    await this.wakeGuard?.(endpoint);
     await this.admission(endpoint,true);
     await this.status(endpoint,{phase:'Active',podUID:pod.metadata.uid,nodeName:pod.spec.nodeName});
     this.idleSince.set(endpoint.uid,this.clock());

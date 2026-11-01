@@ -1,5 +1,6 @@
 // Provider-owned defaults. Tenants select a size/tier; storage credentials and
 // physical node placement are never accepted from the tenant webhook.
+import {recoveryPolicy} from './recovery.mjs';
 export const sizes = {
   micro: {cpu: '250m', memory: '512Mi', sharedBuffers: '128MB', maxConnections: 50},
   small: {cpu: '1', memory: '2Gi', sharedBuffers: '512MB', maxConnections: 100},
@@ -25,7 +26,7 @@ export function applyCatalog(tenant, config) {
   const defaults = [{name: 'shared_buffers', value: size.sharedBuffers, vartype: 'string'},
     {name: 'max_connections', value: String(size.maxConnections), vartype: 'string'}];
   tenant.settings = [...defaults.filter(option => !(tenant.settings || []).some(value => value.name === option.name)), ...(tenant.settings || [])];
-  tenant.storagePolicy = {checkpoint_timeout: config.storage?.checkpointTimeout || '30s',
+  tenant.storagePolicy = {checkpoint_timeout: config.storage?.checkpointTimeout || '30s', pitr_interval: recoveryPolicy(tenant.backup).historySeconds + 's',
     placement_policy: {Attached: tier.secondaries}, timeline_get_throttle: {
     task_kinds: ['PageRequestHandler'], initial: tier.pageBurstPerShard, refill_interval: '1s',
     refill_amount: tier.pageRequestsPerSecondPerShard, max: tier.pageBurstPerShard}};

@@ -45,6 +45,57 @@ spec:
                 - size
                 - tier
               properties:
+                lifecycle:
+                  type: string
+                  enum:
+                    - active
+                    - suspended
+                    - retired
+                  default: active
+                deletionPolicy:
+                  type: string
+                  enum:
+                    - Retain
+                    - Delete
+                  default: Retain
+                backup:
+                  type: object
+                  x-kubernetes-validations:
+                    - rule: self.scheduleSeconds == 0 || (self.scheduleSeconds >= 300 && self.retentionSeconds >= self.scheduleSeconds)
+                      message: Schedule must be at least five minutes and fit retention
+                  properties:
+                    historySeconds:
+                      type: integer
+                      minimum: 0
+                      maximum: 2592000
+                      default: 604800
+                    scheduleSeconds:
+                      type: integer
+                      minimum: 0
+                      maximum: 2592000
+                      default: 0
+                    retentionSeconds:
+                      type: integer
+                      minimum: 300
+                      maximum: 31536000
+                      default: 604800
+                branchFrom:
+                  type: object
+                  required:
+                    - database
+                  properties:
+                    database:
+                      type: string
+                      pattern: ^[a-z][a-z0-9-]{0,38}$
+                    backup:
+                      type: string
+                      pattern: ^[a-z][a-z0-9-]{0,38}$
+                    lsn:
+                      type: string
+                      pattern: ^[0-9A-Fa-f]{1,8}/[0-9A-Fa-f]{1,8}$
+                    timestamp:
+                      type: string
+                      format: date-time
                 replicas:
                   type: integer
                   minimum: 0
@@ -124,6 +175,17 @@ spec:
                         type: integer
                         minimum: 1
                         maximum: 604800
+              x-kubernetes-validations:
+                - rule: "!has(oldSelf.branchFrom) ? !has(self.branchFrom) : has(self.branchFrom) && self.branchFrom == oldSelf.branchFrom"
+                  message: Branch source is immutable
+                - rule: self.lifecycle != "retired" || oldSelf.lifecycle == "retired" || self.replicas == 0
+                  message: Retirement stops compute
+                - rule: oldSelf.lifecycle != "retired" || self.lifecycle == "retired"
+                  message: Retired names cannot be reused
+                - rule: self.deletionPolicy != "Delete" || self.lifecycle == "retired"
+                  message: Delete requires retirement
+                - rule: "!has(self.branchFrom) || !has(self.backup)"
+                  message: Branches inherit root history policy
             status:
               type: object
               x-kubernetes-preserve-unknown-fields: true

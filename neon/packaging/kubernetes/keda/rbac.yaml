@@ -21,6 +21,17 @@ items:
           - create
           - patch
       - apiGroups:
+          - neon.klustr.io
+        resources:
+          - neonbackups
+          - neonbackups/status
+        verbs:
+          - get
+          - list
+          - create
+          - patch
+          - delete
+      - apiGroups:
           - apps
         resources:
           - statefulsets

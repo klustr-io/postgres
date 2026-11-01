@@ -10,6 +10,9 @@ Kubernetes tenant/compute controller. The current release candidate is
 · [Source/build guide](neon/README.md)
 · [Kubernetes tenant deployment and scaling](DEPLOY.md)
 
+[Database lifecycle, backup retention and branching](DEPLOY.md#history-backups-and-branches)
+are configured through the management API and Kubernetes resources.
+
 ## Published images
 
 GitHub Actions builds these images from the tagged source and publishes them to GHCR.

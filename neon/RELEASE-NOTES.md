@@ -1,5 +1,11 @@
 # Deployment support — unreleased
 
+- Explicit suspend/resume and retain/purge API operations, with sticky wake
+  blocking, safe drain and dependent-branch/backup protection.
+- Root history-window policies, native copy-on-write cloning/PITR to new branches,
+  and `NeonBackup` read-only snapshots with optional schedules and retention.
+  Snapshots share primary object storage; independent DR exports remain external.
+
 - Checked-in Docker Compose and Kubernetes/Kustomize YAML provision the broker,
   two pageservers, three safekeepers, metadata PostgreSQL, storage controller and proxy.
 - Shared bootstrap accepts S3 configuration and optional tenants; retains generated
