@@ -13,15 +13,18 @@ not a production HA certification. [Controller build and publication](https://gi
 ## Idle boundary and cost
 
 The intended Klustr boundary is a project reached through
-`{project}.{tenant}.klustr.io`. A shared front door remains available, resolves the
-project and signals demand before forwarding a connection. Project HTTP servers
-and database workers can sleep. The HTTP/SNI project gateway is a future integration;
-this repository currently implements the PostgreSQL proxy and database wake APIs.
-The existing proxy's `ep-<database>.<domain>` address remains the supported direct
-PostgreSQL connection route. Arbitrary nested project hostnames are not yet mapped.
-The future gateway must preserve both tenant and project identity in its route
-registry, mapping them to an opaque database resource name; the first DNS label
-alone is insufficient to distinguish projects belonging to different tenants.
+`{project}.{tenant}.klustr.io`. **PostgreSQL SNI-based wake already exists in the
+Neon proxy.** It extracts the endpoint, authenticates the client and calls the
+controller's `/wake_compute` API; the controller starts storage/compute and the
+proxy forwards the connection. No additional PostgreSQL wake gateway is required.
+
+The supported address in this deployment is `ep-<database>.<domain>`. Supporting
+the nested project/tenant address requires extending that hostname-to-endpoint
+mapping and certificate configuration: the current proxy extracts only the first
+label and passes it as `endpointish`. The mapping must preserve tenant identity
+so identical project names in different tenants cannot share an endpoint/cache key.
+Generic application HTTP routing/wake is a separate future integration; the
+PostgreSQL wake path does not start arbitrary project HTTP servers.
 
 | Layer | Idle behavior in the Kubernetes KEDA deployment |
 |---|---|
