@@ -79,7 +79,7 @@ neon_vm_clear(XLogReaderState *record,
 
 static void
 neon_vm_clear_update(XLogReaderState *record, RelFileLocator rlocator,
-                     BlockNumber oldblk, BlockNumber newblk, uint8 flags)
+					 BlockNumber oldblk, BlockNumber newblk, uint8 flags)
 {
 	XLogRecPtr lsn = record->EndRecPtr;
 	bool new_cleared;
@@ -899,4 +899,3 @@ redo_neon_heap_multi_insert(XLogReaderState *record)
 	if (action == BLK_NEEDS_REDO && freespace < BLCKSZ / 5)
 		XLogRecordPageWithFreeSpace(rlocator, blkno, freespace);
 }
-

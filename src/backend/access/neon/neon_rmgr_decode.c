@@ -413,4 +413,3 @@ DecodeXLogTuple(char *data, Size len, HeapTuple tuple)
 	header->t_infomask2 = xlhdr.t_infomask2;
 	header->t_hoff = xlhdr.t_hoff;
 }
-

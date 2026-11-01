@@ -164,5 +164,3 @@ neon_builtin_identify(uint8 info)
 
 	return id;
 }
-
-

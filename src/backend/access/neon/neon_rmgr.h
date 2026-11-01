@@ -11,4 +11,3 @@ extern const char *neon_builtin_identify(uint8 info);
 
 #endif
 #endif //NEON_RMGR_H
-
