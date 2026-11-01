@@ -1,4 +1,7 @@
-# Deployment support — unreleased
+# Neon PostgreSQL 18.6 — 18.6-rc.5
+
+RC5 rebuilds all seven Linux AMD64 images with deployment, lifecycle and recovery
+support. The PostgreSQL engine/runtime performance limits remain unchanged.
 
 - Explicit suspend/resume and retain/purge API operations, with sticky wake
   blocking, safe drain and dependent-branch/backup protection.
