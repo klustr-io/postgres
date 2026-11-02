@@ -15,6 +15,7 @@
 #include "replication/syncrep.h"
 #include "storage/ipc.h"
 #include "storage/latch.h"
+#include "storage/condition_variable.h"
 #include "storage/proc.h"
 #include "storage/shmem.h"
 #include "tcop/dest.h"
@@ -35,6 +36,7 @@ typedef struct BoundedCommitShared
     pg_atomic_uint64 wait_us;
     pg_atomic_uint32 draining;
     pg_atomic_uint32 quorum_available;
+    ConditionVariable changed;
 } BoundedCommitShared;
 
 static BoundedCommitShared *shared;
@@ -83,7 +85,11 @@ wait_tick(bool committing)
         terminate_after_commit();
         return false;
     }
-    ResetLatch(MyLatch);
+    /* Commit waiters reset their latch before subscribing and rechecking the
+     * predicate. Resetting here would lose a quorum notification delivered
+     * between that recheck and WaitLatch(). The background sampler still polls. */
+    if (!committing)
+        ResetLatch(MyLatch);
     (void) WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
                      10L, WAIT_EVENT_SYNC_REP);
     if (!committing)
@@ -95,6 +101,7 @@ static void
 commit_guard(XLogRecPtr lsn, bool commit)
 {
     uint64 started = 0;
+    bool waiting = false;
     if (previous_hook)
         previous_hook(lsn, commit);
     if (!enabled || RecoveryInProgress())
@@ -106,11 +113,21 @@ commit_guard(XLogRecPtr lsn, bool commit)
     }
     for (;;)
     {
-        uint64 quorum = pg_atomic_read_u64(&shared->quorum_lsn);
-        uint64 frontier = pg_atomic_read_u64(&shared->verified_prefix_at_us);
-        uint64 now = monotonic_us();
-        bool durable = quorum != 0 && lsn <= quorum;
-        bool eligible = synchronous_commit <= SYNCHRONOUS_COMMIT_LOCAL_FLUSH &&
+        uint64 quorum, frontier, now;
+        bool durable, eligible;
+        /* Register before reading the predicate so quorum progress cannot fall
+         * into a check/sleep race. Broadcast removes waiters, so rearm after
+         * every wake. The common already-durable/eligible path never queues. */
+        if (waiting)
+        {
+            ResetLatch(MyLatch);
+            ConditionVariablePrepareToSleep(&shared->changed);
+        }
+        quorum = pg_atomic_read_u64(&shared->quorum_lsn);
+        frontier = pg_atomic_read_u64(&shared->verified_prefix_at_us);
+        now = monotonic_us();
+        durable = quorum != 0 && lsn <= quorum;
+        eligible = synchronous_commit <= SYNCHRONOUS_COMMIT_LOCAL_FLUSH &&
             pg_atomic_read_u32(&shared->quorum_available) != 0 &&
             quorum != 0 && frontier != 0 && now >= frontier &&
             now - frontier < ((uint64) max_age_ms) * 1000 &&
@@ -122,6 +139,8 @@ commit_guard(XLogRecPtr lsn, bool commit)
                 pg_atomic_fetch_add_u64(&shared->fast_acks, 1);
             if (started)
                 pg_atomic_fetch_add_u64(&shared->wait_us, now - started);
+            if (waiting)
+                ConditionVariableCancelSleep();
             return;
         }
         if (!started)
@@ -129,8 +148,19 @@ commit_guard(XLogRecPtr lsn, bool commit)
             started = now;
             pg_atomic_fetch_add_u64(&shared->waits, 1);
         }
+        if (!waiting)
+        {
+            waiting = true;
+            continue;
+        }
+        /* Do not use ConditionVariableSleep here: its interrupt processing
+         * must not turn an already-committed transaction into an ERROR. Keep
+         * the existing unknown-outcome/disconnect cancellation protocol. */
         if (!wait_tick(true))
+        {
+            ConditionVariableCancelSleep();
             return;
+        }
     }
 }
 
@@ -181,19 +211,29 @@ void BoundedCommitGuardShmemInit(void)
         pg_atomic_init_u64(&shared->wait_us, 0);
         pg_atomic_init_u32(&shared->draining, 0);
         pg_atomic_init_u32(&shared->quorum_available, 0);
+        ConditionVariableInit(&shared->changed);
     }
 }
 
 void BoundedCommitGuardPublishQuorum(XLogRecPtr lsn)
 {
     if (shared)
+    {
+        uint64 previous = pg_atomic_read_u64(&shared->quorum_lsn);
         pg_atomic_write_u64(&shared->quorum_lsn, lsn);
+        if (lsn != previous)
+            ConditionVariableBroadcast(&shared->changed);
+    }
 }
 
 void BoundedCommitGuardSetQuorumAvailable(bool available)
 {
     if (shared)
-        pg_atomic_write_u32(&shared->quorum_available, available ? 1 : 0);
+    {
+        uint32 value = available ? 1 : 0;
+        if (pg_atomic_exchange_u32(&shared->quorum_available, value) != value)
+            ConditionVariableBroadcast(&shared->changed);
+    }
 }
 
 void BoundedCommitGuardReset(void)
@@ -203,6 +243,7 @@ void BoundedCommitGuardReset(void)
         pg_atomic_write_u64(&shared->quorum_lsn, 0);
         pg_atomic_write_u64(&shared->verified_prefix_at_us, 0);
         pg_atomic_write_u32(&shared->quorum_available, 0);
+        ConditionVariableBroadcast(&shared->changed);
     }
 }
 
@@ -231,6 +272,7 @@ bounded_commit_guard_main(Datum arg)
             pg_atomic_read_u64(&shared->quorum_lsn) >= target)
         {
             pg_atomic_write_u64(&shared->verified_prefix_at_us, captured_at);
+            ConditionVariableBroadcast(&shared->changed);
             target = InvalidXLogRecPtr;
         }
         wait_tick(false);

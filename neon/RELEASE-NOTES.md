@@ -1,3 +1,21 @@
+# Commit-guard wakeups — unreleased changeset
+
+Quorum/frontier progress directly wakes waiting native commit-guard backends,
+removing avoidable delay from the 10 ms polling interval. Durability predicates,
+bounded-async limits and post-commit cancellation semantics remain enforced;
+the timer remains a fallback. Application SQL and on-disk formats are unchanged.
+
+The synchronous benchmark now enables the deployed guard and checks cancellation
+without false success. Recovery verification distinguishes acknowledged writes
+from cancelled transactions whose committed outcome is unknown to the client.
+
+Validation: the extension compiled and passed local quorum-loss, cancellation,
+recovery, compute-file-loss and sleep/wake checks. Short in-memory JSONB screens
+measured a 7.7× durable throughput improvement and unchanged bounded-async
+throughput. See [measurement scope and results](docs/neon-production/CURRENT-CANDIDATE.md#local-commit-guard-optimization-source-candidate).
+Persistent-disk/S3 performance and production qualification remain open; this
+changeset is not included in the published images.
+
 # Enterprise fleet controller — source update
 
 - Database REST/YAML definitions share inherited fleet policy; backup scheduling

@@ -29,6 +29,29 @@ PostgreSQL throughput; the 85% goal is not met. Different failure topologies,
 flush policies and brief shared-host timing windows limit this comparison.
 No new performance claim is made for RC5.
 
+### Local commit-guard optimization (source candidate)
+
+The November 2 source candidate wakes waiting commits directly when quorum or
+verified-frontier state changes. The previous guard could wait for its 10 ms
+polling timeout even after WAL reached quorum. The predicate, bounded-async
+limits and cancellation/unknown-outcome rules remain enforced; no application
+SQL changes are required. Synchronous benchmark runs now enable the guard to
+match the deployed durable profile.
+
+A short diagnostic used 1,000 JSONB documents, a GIN index, 16 clients and eight
+total CPUs, with local storage on temporary in-memory filesystems. Durable Neon
+increased from 1,524 updates/sec at 10.50 ms mean latency to 11,722–12,462/sec at
+1.28–1.37 ms; the native PG control stayed at 30,261–31,438/sec. Bounded-async
+throughput was unchanged (19,817 before, 19,783 after). These five-second screens
+isolate CPU/IPC overhead and do not establish sustained disk/S3 throughput,
+physical IOPS, production wake latency or the 85% target.
+
+The candidate passed majority-loss blocking, cancellation without false success,
+quorum restoration, compute-crash readback and compute stop/wake checks. Its
+bounded-async check also excluded all old compute files before reconstruction.
+Shared storage stayed online; no OS power-loss, Kubernetes scheduling or
+multi-zone claim follows. This source candidate is not in the published images.
+
 ## Remaining production gates
 
 - Controller HA, cross-worker fencing/migration and credential/certificate rotation.

@@ -304,8 +304,9 @@ auth_enabled = true
                 output.write(settings_text() + "neon.max_file_cache_size='512MB'\n"
                              "neon.file_cache_size_limit='512MB'\n"
                              "neon.file_cache_path='/var/lib/neon/comparison/lfc.cache'\n")
-                if args.commit_policy != 'synchronous':
-                    output.write('neon.bounded_async_commit=on\nneon.bounded_async_max_age=750ms\n')
+                # Both deployed profiles enable the native guard. Synchronous
+                # comparisons must exercise the same durable guard path too.
+                output.write('neon.bounded_async_commit=on\nneon.bounded_async_max_age=750ms\n')
         local('endpoint', 'start', 'bench', '--dev')
     if args.resource_profile == 'compute8-storage8':
         from cpu_layout import configure_services
@@ -327,9 +328,8 @@ auth_enabled = true
         assert sql("SELECT count(*) FROM pg_settings WHERE name LIKE 'neon.%'") == '0'
     else:
         assert sql("SELECT current_setting('neon.pageserver_connstring') <> ''") == 't'
-        if args.commit_policy != 'synchronous':
-            assert sql('SHOW neon.bounded_async_commit') == 'on'
-            assert json.loads(sql('SELECT neon.bounded_commit_guard_status()'))['max_age_ms'] == 750
+        assert sql('SHOW neon.bounded_async_commit') == 'on'
+        assert json.loads(sql('SELECT neon.bounded_commit_guard_status()'))['max_age_ms'] == 750
         standby_names = sql('SHOW synchronous_standby_names')
         assert 'walproposer' in standby_names, 'Missing safekeeper synchronous commit barrier'
         result['engines']['neon']['synchronous_standby_names'] = standby_names
@@ -598,11 +598,14 @@ def lose_compute_storage(repetition, expected, suffix='', extra_probe=None, resu
                            for probe in (row['repetition']*10+1,row['repetition']*10+2)] +
                           [row['acknowledged_probe_id'] for row in result.get('scale_zero_checks',[])])
     recovered = json.loads(sql('SELECT coalesce(json_agg(id ORDER BY id),\'[]\'::json) FROM optimization_durability_probe'))
-    assert recovered == acknowledged, 'Acknowledged probe history changed after losing compute-local storage'
+    unknown = {probe for row in result.get('recovery_checks',[]) for probe in row.get('unknown_outcome_probe_ids',[])}
+    assert not unknown.intersection(acknowledged)
+    assert [probe for probe in recovered if probe not in unknown] == acknowledged, 'Acknowledged probe history changed after losing compute-local storage'
     group = result_group or ('post_wake_storage_loss_checks' if suffix else 'compute_storage_loss_checks')
     result.setdefault(group,[]).append({'repetition':repetition,'status':'PASS','archive_suffix':suffix,
         'additional_acknowledged_probe_id':extra_probe,
         'acknowledged_probe_ids_verified':acknowledged,
+        'unknown_outcome_probe_ids_observed':[probe for probe in recovered if probe in unknown],
         'hard_killed_compute_processes':len(targets),'old_pgdata_retained_outside_restart_path':True,
         'old_lfc_removed_from_restart_path':True,'reconstruct_seconds':wake_seconds,
         'scope':'Compute process tree killed with SIGKILL; all old compute files excluded. Shared pageserver/safekeepers remain running. Not an OS power-failure test.'})
@@ -848,9 +851,13 @@ try:
                         account_offset += count * args.batch_size
                         assert int(sql('SELECT sum(abalance) FROM pgbench_accounts')) == account_offset
             final = digest()
-            if engine == 'neon' and args.commit_policy != 'synchronous':
+            if engine == 'neon':
                 guard_status = json.loads(sql('SELECT neon.bounded_commit_guard_status()'))
-                assert guard_status['enabled'] and guard_status['fast_acks'] > 0
+                assert guard_status['enabled']
+                if args.commit_policy != 'synchronous':
+                    assert guard_status['fast_acks'] > 0
+                else:
+                    assert guard_status['fast_acks'] == 0, 'Durable commits bypassed the quorum frontier'
                 result.setdefault('native_guard_observations', []).append(guard_status)
             assert final['json_rows'] == args.json_rows
             assert final['payload_digest'] == result['initial_fixture']['payload_digest']
@@ -870,6 +877,21 @@ try:
                     stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
                 time.sleep(3)
                 assert pending.poll() is None, 'Commit completed without a durable safekeeper majority'
+                # Cancellation after local commit must disconnect with unknown
+                # outcome, never turn a blocked quorum wait into success.
+                cancelled = subprocess.Popen([UPSTREAM+'psql','-XqAt','-v','ON_ERROR_STOP=1',
+                    '-h','127.0.0.1','-p',str(PORT),'-U',USER,'-d','postgres','-c',
+                    f'INSERT INTO optimization_durability_probe VALUES ({repetition*10+3})'],
+                    env={**os.environ, 'PGAPPNAME':'guard-cancel-check'},
+                    stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+                deadline = time.monotonic()+5
+                while not sql("SELECT pid FROM pg_stat_activity WHERE application_name='guard-cancel-check' AND wait_event='SyncRep'"):
+                    assert cancelled.poll() is None and time.monotonic()<deadline
+                    time.sleep(.01)
+                assert sql("SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE application_name='guard-cancel-check'") == 't'
+                cancelled.communicate(timeout=5)
+                assert cancelled.returncode != 0, 'Cancelled post-commit quorum wait returned success'
+                assert pending.poll() is None, 'Cancelling another waiter bypassed quorum protection'
                 local('safekeeper', 'start', '2')
                 pending.communicate(timeout=90)
                 assert pending.returncode == 0, 'Commit failed after quorum restoration'
@@ -879,7 +901,8 @@ try:
                 assert digest() == final, 'Acknowledged benchmark mutations changed after compute crash/reconstruction'
                 assert sql(f'SELECT count(*) FROM optimization_durability_probe WHERE id IN ({repetition*10+1},{repetition*10+2})') == '2'
                 result.setdefault('recovery_checks', []).append({'engine':engine,'repetition':repetition,
-                    'status':'PASS','checks':['one safekeeper loss permits commit','majority loss blocks commit',
+                    'unknown_outcome_probe_ids':[repetition*10+3],
+                    'status':'PASS','checks':['one safekeeper loss permits commit','majority loss blocks commit','cancelled quorum waiter never returns success',
                         'restoring quorum completes commit','compute crash preserves acknowledged data and JSON payload digest']})
                 print(f'PASS {engine}-r{repetition}: majority-acknowledgement blocking and compute crash recovery',flush=True)
             if args.verify_pageserver_crash and engine == 'neon':
