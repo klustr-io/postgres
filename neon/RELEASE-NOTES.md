@@ -1,3 +1,18 @@
+# Enterprise fleet controller — source update
+
+- A namespace-scoped `NeonFleet` operator provisions the checked-in architecture
+  from YAML or Kubernetes APIs and exposes fleet updates through management APIs.
+- Customer OIDC validates management roles and database tenant/project bindings;
+  a short-lived credential exchange supports ordinary PostgreSQL TLS/SCRAM clients.
+  A managed data-only role avoids delegating Neon's privileged application owner.
+- Three-zone safekeeper affinity and durable profiles enforce the selected WAL
+  quorum layout. External HA metadata PostgreSQL is optional and separately managed.
+- Basic OIDC-to-PostgreSQL JSONB write/read and expiry passed locally. The operator
+  rejects missing physical zones. Real zone-loss recovery and automatic writer
+  fencing are not qualified; status does not claim automatic failover readiness.
+- Native engine/storage image references advance to the published RC5 digests;
+  these new controller features are not part of the immutable RC5 controller tag.
+
 # Neon PostgreSQL 18.6 — 18.6-rc.5
 
 RC5 rebuilds all seven Linux AMD64 images with deployment, lifecycle and recovery

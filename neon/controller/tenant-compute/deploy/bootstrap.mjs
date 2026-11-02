@@ -204,7 +204,7 @@ async function provision() {
   }
   for (const [index, hostname] of host.safekeepers.entries()) await retry(() => request('POST', '/control/v1/safekeeper/' + (index + 1), {
     id: index + 1, region_id: config.s3.region, version: 1, host: hostname, port: 5454, http_port: 7676,
-    availability_zone_id: 'zone-' + (index + 1)}));
+    availability_zone_id: config.storage.safekeeperZones?.[index] || 'zone-' + (index + 1)}));
   for (const tenant of config.tenants) {
     // Inspect existing state before creation; API failures are never treated as
     // evidence that a resource already exists.

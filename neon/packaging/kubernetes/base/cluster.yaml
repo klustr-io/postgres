@@ -7,7 +7,7 @@ data:
   cluster.yaml: |
     name: neon
     domain: db.local
-    computeImage: ghcr.io/klustr-io/neon-compute@sha256:c7d0b5e0a359941fb766253bd8e2b0f8fe6408a6fa855ebf0287070ef280abc8
+    computeImage: ghcr.io/klustr-io/neon-compute@sha256:f84df9577c542dbf3be8a789d301716f77c7d6ac5c79bfd519818834b3427aef
     clientCIDRs:
       - 10.0.0.0/8
       - 172.16.0.0/12

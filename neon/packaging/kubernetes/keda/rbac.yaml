@@ -32,6 +32,24 @@ items:
           - patch
           - delete
       - apiGroups:
+          - neon.klustr.io
+        resources:
+          - neonfleets
+        verbs:
+          - get
+          - list
+          - patch
+          - update
+      - apiGroups:
+          - ""
+        resources:
+          - secrets
+        verbs:
+          - get
+          - list
+          - create
+          - delete
+      - apiGroups:
           - apps
         resources:
           - statefulsets

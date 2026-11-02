@@ -5,13 +5,14 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {stringify} from '../../controller/tenant-compute/node_modules/yaml/dist/index.js';
 import {controllerResources} from '../kubernetes/tenant-controller.mjs';
+import {enterpriseInstallation} from '../../controller/tenant-compute/deploy/enterprise-install.mjs';
 const root = path.dirname(fileURLToPath(import.meta.url));
-const digests = {compute: 'c7d0b5e0a359941fb766253bd8e2b0f8fe6408a6fa855ebf0287070ef280abc8',
-  pageserver: 'b5e045980dd183cdb853cfb870696a31bee85e05aba927163b7c78bb20473d53',
-  safekeeper: '102cad9f13f67e1da256d69e5437399ad090e2100c63136a10b3f52b4b0c4b59',
-  'storage-controller': '4716c664590fea18d9a49bd36502ff9ff6d47352f1a952213b606d1cf04bd13b',
-  'storage-broker': 'c66d30b177d651148d2c70e52c9e974a289dca236aa8cfa33896a8ed6cf55208',
-  proxy: '562852b3eecd2726fcdf05d592e5d6692f7cff1c9434c2db2509a29559d49dd5'};
+const digests = {compute: 'f84df9577c542dbf3be8a789d301716f77c7d6ac5c79bfd519818834b3427aef',
+  pageserver: 'b3a597ad16b77c8a611f8c18481a7b87bb258d919d4d458ad36c5f465373ae28',
+  safekeeper: '0a80018301b8b3d1386e400cb82495f0659bfaaf5b1dc2d75ed3d1fe81dfb0bc',
+  'storage-controller': '0cbbb4f17394e035c5b8838346d1655dd4f99068e535dd78bed4738a814479e7',
+  'storage-broker': 'd2ee7433b77031d3bbaad7a4a6f61d3671307661d09de65e469296b77134dce6',
+  proxy: '034e918af3ca73bb939fdb6d8b4b6c73dce35dcd433f048a35aca9b217194e24'};
 const image = role => `ghcr.io/klustr-io/neon-${role}@sha256:${digests[role]}`;
 const helper = 'ghcr.io/klustr-io/neon-tenant-controller@sha256:d65148743f95a2262d110525c7e5f23cebc6a2763e6620113a5d5f35affb1b54';
 const shell = command => ['/bin/sh', '-ec', command];
@@ -166,6 +167,8 @@ output('../kubernetes/base/kustomization.yaml', {apiVersion: 'kustomize.config.k
   resources: ['namespace.yaml', 'cluster.yaml', 'bootstrap.yaml', 'storage.yaml', 'controller.yaml']});
 
 const databaseSchema = {type: 'object', required: ['size', 'tier'], properties: {
+  identity: {type: 'object', required: ['tenant', 'project'], properties: {
+    tenant: {type: 'string', pattern: '^[a-z][a-z0-9-]{0,62}$'}, project: {type: 'string', pattern: '^[a-z][a-z0-9-]{0,62}$'}}},
   lifecycle: {type: 'string', enum: ['active', 'suspended', 'retired'], default: 'active'},
   deletionPolicy: {type: 'string', enum: ['Retain', 'Delete'], default: 'Retain'},
   backup: {type: 'object', 'x-kubernetes-validations': [
@@ -216,6 +219,8 @@ output('../kubernetes/keda/rbac.yaml', {apiVersion: 'v1', kind: 'List', items: [
   {apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'Role', metadata: {name: 'neon-database-controller'}, rules: [
     {apiGroups: ['neon.klustr.io'], resources: ['neondatabases', 'neondatabases/status', 'neonstoragefleets', 'neonstoragefleets/status'], verbs: ['get', 'list', 'watch', 'create', 'patch']},
     {apiGroups: ['neon.klustr.io'], resources: ['neonbackups', 'neonbackups/status'], verbs: ['get', 'list', 'create', 'patch', 'delete']},
+    {apiGroups: ['neon.klustr.io'], resources: ['neonfleets'], verbs: ['get', 'list', 'patch', 'update']},
+    {apiGroups: [''], resources: ['secrets'], verbs: ['get', 'list', 'create', 'delete']},
     {apiGroups: ['apps'], resources: ['statefulsets'], verbs: ['get', 'list', 'patch']},
     {apiGroups: ['keda.sh'], resources: ['scaledobjects'], verbs: ['get', 'list', 'create', 'patch']},
     {apiGroups: [''], resources: ['configmaps'], verbs: ['create']}]},
@@ -273,3 +278,16 @@ output('../kubernetes/keda/kustomization.yaml', {apiVersion: 'kustomize.config.k
   patches: [{path: 'controller-patch.yaml'}, {path: 'service-patch.yaml'}, {path: 'init-patch.yaml'}, {path: 'provision-patch.yaml'}, ...fleetPatches]});
 output('../kubernetes/examples/database.yaml', {apiVersion: 'neon.klustr.io/v1alpha1', kind: 'NeonDatabase', metadata: {name: 'events', namespace: ns},
   spec: {database: 'app', size: 'small', tier: 'shared', suspend: {mode: 'idle', idleSeconds: 300}}});
+const enterprise = enterpriseInstallation(helper, ns);
+output('../kubernetes/enterprise/fleet-crd.yaml', enterprise.fleetCRD);
+output('../kubernetes/enterprise/node-reader.yaml', enterprise.nodeReader);
+output('../kubernetes/enterprise/operator.yaml', enterprise.operator);
+output('../kubernetes/enterprise/kustomization.yaml', {apiVersion: 'kustomize.config.k8s.io/v1beta1', kind: 'Kustomization', namespace: ns, resources: ['operator.yaml']});
+output('../kubernetes/examples/fleet.yaml', {apiVersion: 'neon.klustr.io/v1alpha1', kind: 'NeonFleet', metadata: {name: 'enterprise-a', namespace: ns}, spec: {
+  domain: 'db.customer.example', clientCIDRs: ['10.0.0.0/8'],
+  identity: {issuer: 'https://identity.customer.example', management: {audience: 'klustr-fleet-api', roleBindings: [{group: 'database-admins', role: 'fleet-admin'}]},
+    database: {audience: 'klustr-postgres', requireTenantProjectBinding: true, roleBindings: [{group: 'application-writers', postgresRole: 'app_runtime'}]}},
+  storage: {objectStoreSecretRef: 'customer-s3', storageClass: 'durable-csi'},
+  replication: {scope: 'availability-zones', zones: ['zone-a', 'zone-b', 'zone-c'], mode: 'synchronous-quorum', safekeepers: 3},
+  defaults: {size: 'small', tier: 'standard', suspend: {mode: 'idle', idleSeconds: 300}, backup: {historySeconds: 604800, scheduleSeconds: 0, retentionSeconds: 604800}}
+}});

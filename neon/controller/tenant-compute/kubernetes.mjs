@@ -12,14 +12,14 @@ export class Kubernetes {
     this.namespace=namespace;this.host=host;this.port=port;this.account=account;
     this.agent=new https.Agent({keepAlive:true,maxSockets:32,ca:fs.readFileSync(account+'/ca.crt'),rejectUnauthorized:true});
   }
-  async request(method,url,body){
+  async request(method,url,body,contentType){
     const data=body===undefined?null:Buffer.from(JSON.stringify(body));
     // Read projected credentials per request to honor Kubernetes token rotation.
     const token=fs.readFileSync(this.account+'/token','utf8').trim();
     return await new Promise((resolve,reject)=>{
       const request=https.request({host:this.host,port:this.port,path:url,method,agent:this.agent,
         headers:{Authorization:'Bearer '+token,Accept:'application/json',
-          ...(data?{'Content-Type':method==='PATCH'?'application/merge-patch+json':'application/json','Content-Length':data.length}:{})}},response=>{
+          ...(data?{'Content-Type':contentType||(method==='PATCH'?'application/merge-patch+json':'application/json'),'Content-Length':data.length}:{})}},response=>{
         const chunks=[];let size=0;
         response.on('data',chunk=>{size+=chunk.length;if(size>8*1024*1024)response.destroy(Error('API response limit'));else chunks.push(chunk);});
         response.on('error',reject);
@@ -34,8 +34,8 @@ export class Kubernetes {
   }
   path(kind,name=''){
     const prefixes={configmaps:'/api/v1',secrets:'/api/v1',services:'/api/v1',pods:'/api/v1',
-      deployments:'/apis/apps/v1',statefulsets:'/apis/apps/v1',leases:'/apis/coordination.k8s.io/v1',endpointslices:'/apis/discovery.k8s.io/v1',
-      neondatabases:'/apis/neon.klustr.io/v1alpha1',neonbackups:'/apis/neon.klustr.io/v1alpha1',neonstoragefleets:'/apis/neon.klustr.io/v1alpha1',scaledobjects:'/apis/keda.sh/v1alpha1',triggerauthentications:'/apis/keda.sh/v1alpha1'};
+      deployments:'/apis/apps/v1',statefulsets:'/apis/apps/v1',jobs:'/apis/batch/v1',serviceaccounts:'/api/v1',roles:'/apis/rbac.authorization.k8s.io/v1',rolebindings:'/apis/rbac.authorization.k8s.io/v1',networkpolicies:'/apis/networking.k8s.io/v1',leases:'/apis/coordination.k8s.io/v1',endpointslices:'/apis/discovery.k8s.io/v1',
+      neondatabases:'/apis/neon.klustr.io/v1alpha1',neonfleets:'/apis/neon.klustr.io/v1alpha1',neonbackups:'/apis/neon.klustr.io/v1alpha1',neonstoragefleets:'/apis/neon.klustr.io/v1alpha1',scaledobjects:'/apis/keda.sh/v1alpha1',triggerauthentications:'/apis/keda.sh/v1alpha1'};
     if(!prefixes[kind]||name&&!/^[a-z0-9][a-z0-9.-]{0,252}$/.test(name))throw Error('Invalid resource path');
     return `${prefixes[kind]}/namespaces/${this.namespace}/${kind}${name?'/'+name:''}`;
   }
@@ -86,8 +86,9 @@ export class Kubernetes {
 // Takeover observes a stable resourceVersion for an entire lease interval rather
 // than trusting wall-clock agreement between workers. Local expiry is monotonic.
 export class Leadership {
-  constructor(api,{podName,duration=15,clock=()=>performance.now()}){
+  constructor(api,{podName,duration=15,clock=()=>performance.now(),leaseName='neon-tenant-controller'}){
     this.api=api;this.identity=podName+':'+randomUUID();this.duration=duration;this.clock=clock;
+    this.leaseName=leaseName;
     this.deadline=0;this.observedVersion=null;this.observedAt=0;this.busy=false;this.lastError=null;
   }
   get active(){return this.clock()<this.deadline;}
@@ -95,10 +96,10 @@ export class Leadership {
   async tick(){
     if(this.busy)return;this.busy=true;const started=this.clock();
     try{
-      let lease=await this.api.optional('leases','neon-tenant-controller');
+      let lease=await this.api.optional('leases',this.leaseName);
       if(!lease){
         lease=await this.api.create('leases',{apiVersion:'coordination.k8s.io/v1',kind:'Lease',
-          metadata:{name:'neon-tenant-controller'},spec:{holderIdentity:this.identity,leaseDurationSeconds:this.duration,
+          metadata:{name:this.leaseName},spec:{holderIdentity:this.identity,leaseDurationSeconds:this.duration,
             acquireTime:new Date().toISOString().replace(/Z$/,'000Z'),renewTime:new Date().toISOString().replace(/Z$/,'000Z')}});
       }else if(lease.spec.holderIdentity!==this.identity){
         this.deadline=0;
@@ -108,7 +109,7 @@ export class Leadership {
         const wait=Math.max(this.duration,lease.spec.leaseDurationSeconds||this.duration)*1000+2000;
         if(started-this.observedAt<wait)return;
       }
-      lease=await this.api.patch('leases','neon-tenant-controller',{
+      lease=await this.api.patch('leases',this.leaseName,{
         metadata:{resourceVersion:lease.metadata.resourceVersion},spec:{holderIdentity:this.identity,
           leaseDurationSeconds:this.duration,renewTime:new Date().toISOString().replace(/Z$/,'000Z')}});
       if(lease.spec.holderIdentity!==this.identity)throw Error('Lease holder mismatch');

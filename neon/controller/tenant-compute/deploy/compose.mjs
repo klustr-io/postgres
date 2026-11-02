@@ -13,6 +13,11 @@ const network = process.env.NEON_DOCKER_NETWORK;
 const volume = process.env.NEON_DOCKER_STATE_VOLUME;
 if (![project, network, volume].every(value => /^[a-zA-Z0-9][a-zA-Z0-9_.-]+$/.test(value || ''))) throw Error('Docker deployment identity required');
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+function deployment() {
+  const config = configuration();
+  if (config.identity) throw Error('OIDC requires the Kubernetes enterprise controller; Compose identity configuration is unsupported');
+  return config;
+}
 async function docker(method, route, body) {
   return new Promise((resolve, reject) => {
     const request = http.request({socketPath: '/var/run/docker.sock', path: '/v1.45' + route, method,
@@ -34,7 +39,7 @@ class ComposeApi {
   constructor() {this.namespace = 'compose';}
   async list(kind) {
     if (kind !== 'configmaps') throw Error('Unsupported Compose lookup');
-    const config = configuration();
+    const config = deployment();
     if (config.name !== project) throw Error('Compose project and config.name must match');
     if (!fs.existsSync(state + '/provisioned')) return [];
     return config.tenants.map(tenant => {
@@ -50,7 +55,7 @@ class ComposeApi {
     if (kind !== 'secrets') throw Error('Unsupported Compose lookup');
     if (name === 'neon-service-ca') return {data: {'ca.crt': fs.readFileSync(state + '/ca.crt').toString('base64')}};
     const match = name.match(/^(ep-[a-z][a-z0-9-]*)-(roles|admin)$/);
-    if (!match || !configuration().tenants.some(tenant => tenant.endpointId === match[1])) throw Error('Unknown tenant credential');
+    if (!match || !deployment().tenants.some(tenant => tenant.endpointId === match[1])) throw Error('Unknown tenant credential');
     const key = match[2] + '.json';
     return {data: {[key]: fs.readFileSync(`${state}/tenants/${match[1]}/${key}`).toString('base64')}};
   }
@@ -162,6 +167,7 @@ class ComposeLifecycle extends Lifecycle {
 }
 
 export async function composeRuntime() {
+  deployment();
   const api = new ComposeApi();
   // Refuse multiple live controllers; Compose scale-out is not a fencing system.
   const leader = {active: false, lastError: null, identity: 'compose', async tick() {

@@ -1,0 +1,94 @@
+# Deployment source: neon/packaging/deploy/render.mjs
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: neonfleets.neon.klustr.io
+spec:
+  group: neon.klustr.io
+  scope: Namespaced
+  names:
+    kind: NeonFleet
+    plural: neonfleets
+    singular: neonfleet
+    shortNames:
+      - neonfleet
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Zones
+          type: boolean
+          jsonPath: .status.zonePlacementConfigured
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - domain
+                - identity
+                - storage
+                - replication
+              properties:
+                domain:
+                  type: string
+                clientCIDRs:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items:
+                    type: string
+                identity:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                storage:
+                  type: object
+                  required:
+                    - objectStoreSecretRef
+                    - storageClass
+                  properties:
+                    objectStoreSecretRef:
+                      type: string
+                    storageClass:
+                      type: string
+                    metadataDatabaseSecretRef:
+                      type: string
+                replication:
+                  type: object
+                  required:
+                    - scope
+                    - mode
+                    - zones
+                    - safekeepers
+                  properties:
+                    scope:
+                      type: string
+                      enum:
+                        - availability-zones
+                    mode:
+                      type: string
+                      enum:
+                        - synchronous-quorum
+                    zones:
+                      type: array
+                      minItems: 3
+                      maxItems: 3
+                      items:
+                        type: string
+                    safekeepers:
+                      type: integer
+                      enum:
+                        - 3
+                defaults:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true

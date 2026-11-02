@@ -1,0 +1,44 @@
+# Deployment source: neon/packaging/deploy/render.mjs
+apiVersion: neon.klustr.io/v1alpha1
+kind: NeonFleet
+metadata:
+  name: enterprise-a
+  namespace: neon
+spec:
+  domain: db.customer.example
+  clientCIDRs:
+    - 10.0.0.0/8
+  identity:
+    issuer: https://identity.customer.example
+    management:
+      audience: klustr-fleet-api
+      roleBindings:
+        - group: database-admins
+          role: fleet-admin
+    database:
+      audience: klustr-postgres
+      requireTenantProjectBinding: true
+      roleBindings:
+        - group: application-writers
+          postgresRole: app_runtime
+  storage:
+    objectStoreSecretRef: customer-s3
+    storageClass: durable-csi
+  replication:
+    scope: availability-zones
+    zones:
+      - zone-a
+      - zone-b
+      - zone-c
+    mode: synchronous-quorum
+    safekeepers: 3
+  defaults:
+    size: small
+    tier: standard
+    suspend:
+      mode: idle
+      idleSeconds: 300
+    backup:
+      historySeconds: 604800
+      scheduleSeconds: 0
+      retentionSeconds: 604800

@@ -108,11 +108,11 @@ export class Lifecycle {
       type:'Opaque',data:{'config.json':data}});
     this.leader.require();
   }
-  async admin(endpoint,pod){
+  async admin(endpoint,pod,database='postgres'){
     const [secret,ca]=await Promise.all([this.api.get('secrets',endpoint.adminSecret),this.api.get('secrets',endpoint.caSecret)]);
     const credentials=JSON.parse(secretText(secret,'admin.json'));
     if(!credentials.user||!credentials.password)throw Error('Missing administrator credentials');
-    return await this.connect({...credentials,database:'postgres',host:pod.status.podIP,port:5432,
+    return await this.connect({...credentials,database,host:pod.status.podIP,port:5432,
       application_name:'neon-lifecycle-controller',connectionTimeoutMillis:3000,
       statement_timeout:10000,query_timeout:12000,
       ssl:{rejectUnauthorized:true,ca:secretText(ca,'ca.crt'),servername:endpoint.name+'.'+this.api.namespace+'.svc.cluster.local'}});

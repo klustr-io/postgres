@@ -12,6 +12,8 @@ Kubernetes tenant/compute controller. The current release candidate is
 
 [Database lifecycle, backup retention and branching](DEPLOY.md#history-backups-and-branches)
 are configured through the management API and Kubernetes resources.
+Customer-owned [enterprise fleets and OIDC](DEPLOY.md#enterprise-fleets-and-oidc)
+add namespace-scoped provisioning, short-lived database logins and zone placement.
 
 ## Published images
 
@@ -36,7 +38,7 @@ registry digests. Version tags identify releases; `sha-<commit>` identifies sour
 `candidate` tracks release candidates; only a stable release updates `latest`.
 
 ```sh
-docker pull ghcr.io/klustr-io/neon-compute:18.6-rc.4
+docker pull ghcr.io/klustr-io/neon-compute:18.6-rc.5
 ```
 
 GitHub creates new GHCR packages private initially. An organization administrator
@@ -47,7 +49,7 @@ can change afterward. Public release
 archives provide an independent download path:
 
 ```sh
-base=https://github.com/klustr-io/postgres/releases/download/neon-v18.6-rc.4
+base=https://github.com/klustr-io/postgres/releases/download/neon-v18.6-rc.5
 curl -fLO "$base/compute.oci.tar"
 curl -fLO "$base/SHA256SUMS"
 sha256sum --check --ignore-missing SHA256SUMS

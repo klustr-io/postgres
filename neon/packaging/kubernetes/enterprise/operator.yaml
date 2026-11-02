@@ -1,0 +1,206 @@
+# Deployment source: neon/packaging/deploy/render.mjs
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: neon-fleet-operator
+      namespace: neon
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    metadata:
+      name: neon-fleet-operator
+      namespace: neon
+    rules:
+      - apiGroups:
+          - ""
+        resources:
+          - configmaps
+          - secrets
+          - services
+          - serviceaccounts
+        verbs:
+          - get
+          - list
+          - create
+          - patch
+          - delete
+      - apiGroups:
+          - ""
+        resources:
+          - pods
+        verbs:
+          - get
+          - list
+      - apiGroups:
+          - apps
+        resources:
+          - deployments
+          - statefulsets
+        verbs:
+          - get
+          - list
+          - create
+          - patch
+      - apiGroups:
+          - batch
+        resources:
+          - jobs
+        verbs:
+          - get
+          - create
+          - patch
+      - apiGroups:
+          - networking.k8s.io
+        resources:
+          - networkpolicies
+        verbs:
+          - get
+          - create
+          - patch
+      - apiGroups:
+          - rbac.authorization.k8s.io
+        resources:
+          - roles
+          - rolebindings
+        verbs:
+          - get
+          - create
+          - patch
+      - apiGroups:
+          - coordination.k8s.io
+        resources:
+          - leases
+        verbs:
+          - get
+          - create
+          - patch
+      - apiGroups:
+          - discovery.k8s.io
+        resources:
+          - endpointslices
+        verbs:
+          - get
+          - list
+      - apiGroups:
+          - neon.klustr.io
+        resources:
+          - neonfleets
+          - neonfleets/status
+          - neondatabases
+          - neondatabases/status
+          - neondatabases/scale
+          - neonbackups
+          - neonbackups/status
+          - neonstoragefleets
+          - neonstoragefleets/status
+          - neonstoragefleets/scale
+        verbs:
+          - get
+          - list
+          - watch
+          - create
+          - patch
+          - update
+          - delete
+      - apiGroups:
+          - keda.sh
+        resources:
+          - scaledobjects
+          - triggerauthentications
+        verbs:
+          - get
+          - list
+          - create
+          - patch
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: neon-fleet-operator
+      namespace: neon
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: Role
+      name: neon-fleet-operator
+    subjects:
+      - kind: ServiceAccount
+        name: neon-fleet-operator
+        namespace: neon
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRoleBinding
+    metadata:
+      name: neon-fleet-node-reader-neon
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: ClusterRole
+      name: neon-fleet-node-reader
+    subjects:
+      - kind: ServiceAccount
+        name: neon-fleet-operator
+        namespace: neon
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: neon-fleet-operator
+      namespace: neon
+    spec:
+      replicas: 1
+      strategy:
+        type: Recreate
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: neon-fleet-operator
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: neon-fleet-operator
+        spec:
+          serviceAccountName: neon-fleet-operator
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: operator
+              image: ghcr.io/klustr-io/neon-tenant-controller@sha256:d65148743f95a2262d110525c7e5f23cebc6a2763e6620113a5d5f35affb1b54
+              command:
+                - /usr/local/bin/node
+                - /app/deploy/fleet-operator.mjs
+              env:
+                - name: POD_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+                - name: POD_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
+                - name: FLEET_CONTROLLER_IMAGE
+                  value: ghcr.io/klustr-io/neon-tenant-controller@sha256:d65148743f95a2262d110525c7e5f23cebc6a2763e6620113a5d5f35affb1b54
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+              ports:
+                - name: health
+                  containerPort: 9092
+              readinessProbe:
+                httpGet:
+                  path: /readyz
+                  port: 9092
+              livenessProbe:
+                httpGet:
+                  path: /livez
+                  port: 9092

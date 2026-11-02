@@ -5,9 +5,9 @@ architecture. The Kubernetes KEDA path supports declarative database provisionin
 size/tier changes, demand webhooks, compute suspension and shared-storage suspension.
 Applications use normal PostgreSQL connections, SQL and JSONB.
 
-**These changes are newer than RC4.** Deployment YAML pins the updated public
+**These controller changes are newer than RC5.** Deployment YAML pins the public
 controller image built from commit `1d895c7dcc2fb31e9dc480cf8cd9bd385a55532c`;
-other runtime images are pinned to RC4 digests. This is an integration candidate,
+other runtime images are pinned to RC5 digests. This is an integration candidate,
 not a production HA certification. [Controller build and publication](https://github.com/klustr-io/postgres/actions/runs/41304715810).
 
 ## Idle boundary and cost
@@ -57,6 +57,207 @@ appropriate per-tenant wildcards or individual certificates. Ordinary PostgreSQL
 clients negotiate SSL before TLS, so a generic TLS/SNI router needs direct TLS
 clients or a PostgreSQL-aware front door. Authenticate/rate-limit before an
 expensive wake; SNI alone is not authorization.
+
+## Enterprise fleets and OIDC
+
+The enterprise operator reconciles a namespaced `NeonFleet` into the storage,
+bootstrap, proxy, database controller and KEDA resources. It configures OIDC for
+management and a database credential-exchange API, with enforced placement across
+three physical availability zones. These controller features are newer than RC5;
+the checked-in deployment references use the controller build listed above.
+`NeonStorageFleet` remains the separate drain-aware suspension target.
+
+Use one fleet in each fresh customer namespace. The fleet shape is:
+
+```yaml
+apiVersion: neon.klustr.io/v1alpha1
+kind: NeonFleet
+metadata:
+  name: enterprise-a
+spec:
+  domain: klustr.io
+  identity:
+    issuer: https://identity.customer.example
+    management:
+      audience: klustr-fleet-api
+      roleBindings:
+        - group: database-admins
+          role: fleet-admin
+    database:
+      audience: klustr-postgres
+      roleBindings:
+        - group: application-writers
+          postgresRole: app_runtime
+      requireTenantProjectBinding: true
+  storage:
+    objectStoreSecretRef: customer-s3
+    storageClass: durable-csi
+  replication:
+    scope: availability-zones       # One Kubernetes cluster initially
+    zones: [zone-a, zone-b, zone-c]
+    mode: synchronous-quorum
+    safekeepers: 3                 # One per physical zone; majority acknowledgement
+  defaults:
+    suspend: {mode: idle, idleSeconds: 300}
+    backup: {historySeconds: 604800, scheduleSeconds: 86400, retentionSeconds: 2592000}
+```
+
+Management identity maps customer groups to fleet-scoped permissions, including
+separate authorization for database creation, backup access and destructive purge.
+Database identity maps approved users/workloads to explicitly granted PostgreSQL
+roles and the correct tenant/project/branch. Database access must not imply fleet
+administration. Clients obtain short-lived tokens from the customer's identity
+provider; no customer signing keys belong in the fleet. Browser login uses OIDC;
+API/database token acceptance needs the intended resource audience, issuer,
+signature, expiry and claim bindings. An OIDC ID token is not a generic API access
+token. See [OIDC Core](https://openid.net/specs/openid-connect-core-1_0.html).
+
+Management APIs validate issuer, audience, signature, mandatory expiry and group
+bindings. Signing keys are cached for five minutes; an unknown key ID can refresh
+after a five-second minimum interval. HTTPS discovery verifies the issuer exactly.
+Set optional `jwksUrl` to a fixed HTTPS JWKS endpoint, or `caSecretRef` to a Secret
+containing `ca.crt` for a private issuer. Supported signing algorithms are RS256
+(default), ES256 and EdDSA when explicitly selected in `algorithms`.
+
+Management roles are `fleet-admin`, `database-operator`, `backup-operator` and
+`viewer`. Fleet updates and database deletion require fleet-admin; backup mutation
+requires backup-operator or fleet-admin. Database operators manage databases,
+branches and wake events. GET operations permit all four roles. A provider may
+use `groupsClaim`, `tenantClaim` and `projectClaim` to select claim names.
+Static management tokens are disabled when OIDC is configured unless
+`identity.management.allowStaticToken: true` explicitly enables break-glass access.
+
+Zone replication uses Neon's safekeeper WAL quorum and pageserver placement, with
+one writable compute primary per branch. This is not multiple independent writable
+Postgres instances. Physical scheduling must enforce zone separation using node
+affinity and [topology constraints](https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/),
+with matching CSI volume topology. Metadata PostgreSQL, routing/control services
+and object storage must also meet the selected failure policy. Merely assigning
+different availability-zone strings to three Pods on one node provides no zone
+resilience. Zone-loss durability and safe compute failover need qualification
+before the fleet can report those guarantees as ready.
+
+The API and YAML must reconcile the same desired state and expose desired versus
+observed placement, quorum health, replication lag and failover readiness. Separate
+cross-region replication, asynchronous loss policies and read replicas need explicit
+policies rather than inheriting a zone-quorum guarantee. The earlier one-second
+compute-loss allowance is not automatically a zone/region-loss guarantee.
+
+Idle fleets may stop database/storage workers after the existing durability drain.
+An always-on database keeps its fleet active; shared wake/control services remain
+available. Whole-fleet suspension trades warm failover/startup speed for idle cost.
+
+### Install a customer fleet
+
+Install KEDA as described below. A cluster administrator installs the shared CRDs
+and the read-only node role once:
+
+```sh
+kubectl apply -f neon/packaging/kubernetes/keda/database-crd.yaml -f neon/packaging/kubernetes/keda/backup-crd.yaml -f neon/packaging/kubernetes/keda/fleet-crd.yaml
+kubectl apply -f neon/packaging/kubernetes/enterprise/fleet-crd.yaml -f neon/packaging/kubernetes/enterprise/node-reader.yaml
+```
+
+Copy [`enterprise/`](neon/packaging/kubernetes/enterprise) into the customer's
+GitOps repository. In its `kustomization.yaml`, set `namespace: enterprise-a` and
+`namePrefix: enterprise-a-`; use a unique prefix for each installation so the node
+reader binding is distinct. Create that namespace, then `kubectl apply -k` the
+copied directory. The operator has namespace-scoped provisioning authority and
+cluster-wide read-only node access; its leadership lease is separate from the
+database controller. It refuses to adopt an existing deployment or migrate its
+storage identity implicitly.
+
+Create the object-store Secret in the customer namespace from a protected file:
+
+```text
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_REGION=...
+NEON_S3_ENDPOINT=https://s3.example.com
+NEON_S3_BUCKET=...
+NEON_S3_PREFIX=customer-fleets
+```
+
+An optional `AWS_SESSION_TOKEN` is supported. The actual prefix appends namespace
+and fleet UID to isolate deployments. Apply the edited
+[`examples/fleet.yaml`](neon/packaging/kubernetes/examples/fleet.yaml) into that
+namespace. Three Ready, schedulable nodes carrying the actual configured
+`topology.kubernetes.io/zone` labels must be available for initial provisioning.
+PVCs use the selected CSI class; changing storage endpoints/classes or zone
+topology requires an explicit migration. Operator status reports Pending if a
+zone is missing or a resource belongs to another deployment.
+
+Set optional `storage.metadataDatabaseSecretRef` to use an externally managed HA
+PostgreSQL database. That Secret's `url` must be a dedicated metadata DSN with
+`sslmode=verify-full`; optional CA files can live in the same mounted Secret.
+The local metadata StatefulSet is then omitted and excluded from suspension.
+Availability and idle cost of that external metadata service remain its provider's
+responsibility. Without it, metadata remains a single PostgreSQL instance.
+
+After bootstrap, OIDC-authorized `GET /v1/fleet` returns spec/status and
+`PUT /v1/fleet` replaces the desired spec. Initial creation uses Kubernetes YAML
+or the Kubernetes API, since the fleet's management runtime does not exist yet.
+This configures Neon OIDC; it does not change the Kubernetes API server's own
+identity-provider configuration. Deleting a fleet requests suspension and retains
+data behind a finalizer. Do not remove that finalizer to bypass data review.
+
+### Connect with a customer OIDC identity
+
+Give each database an explicit identity binding when provisioning:
+
+```yaml
+identity:
+  tenant: acme
+  project: billing
+```
+
+The application obtains an access token for the configured database audience from
+the customer's IdP, containing matching tenant/project claims and an authorized
+group. Exchange it over the same verified management TLS endpoint:
+
+```text
+POST /v1/databases/events/credentials
+Authorization: Bearer <database access token>
+{"role":"app_runtime"}
+```
+
+The 201 response contains `user`, `password`, `expiresAt`, `database`, `host`, `port`
+and `sslmode`. Use those values with an ordinary PostgreSQL client. Retry a 503
+while provisioning/wake is pending. Authentication is checked before wake and
+again before issuance. Credentials expire at the earlier of token expiry and 15
+minutes. They grant membership in the configured SQL role and cannot
+target superuser/replication/role-administration roles. No application SQL
+functions or proxy protocol extensions are required.
+
+The default managed role `app_runtime` is created automatically with no login or
+administrative attributes. It receives CONNECT, public-schema USAGE, table CRUD
+and sequence usage, including default privileges for tables created by the
+managed application owner. It does not receive schema CREATE or RLS bypass.
+Use optional `database.managedRole` to rename it; other role mappings must refer
+to existing restricted PostgreSQL roles. Neon's default `app_user` has privileged
+attributes and is deliberately not delegated by this exchange.
+
+OIDC-enabled fleets disable static proxy database passwords by default; optional
+`identity.database.allowPasswordAuth: true` explicitly permits both. Enterprise
+proxy auth caching is disabled so fresh connections consult current policy.
+Policy changes invalidate exchanged credentials for new proxy authentications.
+Expiry prevents new connections; it does not terminate already authenticated
+sessions. Applications must refresh credentials when opening new pool connections.
+There is a limit of 128 unexpired exchanged logins per database.
+OIDC claims authorize the exchange; they are not installed as SQL session claims.
+The SQL session uses the generated login and inherits the mapped data role. RLS
+policies that depend on JWT claims need a separate, explicit integration.
+
+Cleanup does not wake sleeping compute. Expired login roles with no dependencies
+are removed when compute is running; roles owning customer objects are retained
+with NOLOGIN. Their object ownership is never reassigned automatically. Prefer
+existing application tables and restricted data roles for high-frequency exchanges;
+ownership cleanup for DDL-capable identities remains an administrative operation.
+
+`Provisioned` means resources were reconciled, not that HA is certified. Status
+records observed generation, physical placement observations and
+`automaticFailoverReady: false`. Cross-worker writer fencing, control-plane HA and
+actual zone-loss recovery still require qualification. Node labels in local
+single-worker tests cannot substitute for that evidence.
 
 ## Platform installation: Kubernetes with KEDA
 

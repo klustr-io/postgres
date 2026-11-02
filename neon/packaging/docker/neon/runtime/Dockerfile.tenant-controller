@@ -11,6 +11,8 @@ RUN npm ci --omit=dev --ignore-scripts --no-fund --no-audit && npm cache clean -
 COPY neon/controller/tenant-compute/*.mjs ./
 COPY neon/controller/tenant-compute/deploy/ ./deploy/
 COPY neon/controller/tenant-compute/keda/ ./keda/
+COPY neon/packaging/kubernetes/base/ ./fleet-templates/base/
+COPY neon/packaging/kubernetes/keda/ ./fleet-templates/keda/
 FROM build AS roots
 COPY --from=minimal-base / /minimal-base/
 COPY neon/packaging/neon/controller-rootfs.mjs /collector.mjs

@@ -198,7 +198,7 @@ items:
           terminationGracePeriodSeconds: 60
           containers:
             - name: proxy
-              image: ghcr.io/klustr-io/neon-proxy@sha256:562852b3eecd2726fcdf05d592e5d6692f7cff1c9434c2db2509a29559d49dd5
+              image: ghcr.io/klustr-io/neon-proxy@sha256:034e918af3ca73bb939fdb6d8b4b6c73dce35dcd433f048a35aca9b217194e24
               imagePullPolicy: IfNotPresent
               args:
                 - --proxy

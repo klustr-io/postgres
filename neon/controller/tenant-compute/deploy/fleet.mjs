@@ -19,7 +19,7 @@ export class StorageFleet {
   }
   members() {
     const base = this.databases.base();
-    return [{kind: 'statefulsets', name: 'metadata'}, {kind: 'deployments', name: 'storage-broker'},
+    return [...(base.storage.externalMetadata ? [] : [{kind: 'statefulsets', name: 'metadata'}]), {kind: 'deployments', name: 'storage-broker'},
       {kind: 'deployments', name: 'storage-controller'},
       ...base.storage.pageservers.map(node => ({kind: 'statefulsets', name: node.resourceName || node.host.split('.')[0]})),
       ...[1, 2, 3].map(id => ({kind: 'statefulsets', name: 'safekeeper-' + id}))];
@@ -127,10 +127,11 @@ export class StorageFleet {
       if (resource.spec.replicas === 1) {
         if (this.active && resource.status?.phase === 'Active') return;
         await this.status({phase: 'Starting', replicas: 1, selector: 'neon.klustr.io/storage-fleet=storage', reason: null, remoteDurabilityVerifiedAt: null});
-        await this.scale(members[0], 1); await this.scale(members[1], 1);
-        if (!await this.ready(members[0])) return;
-        for (const member of members.slice(2)) await this.scale(member, 1);
-        if (!await this.ready(members[2])) return;
+        const metadata = members.find(member => member.name === 'metadata'), broker = members.find(member => member.name === 'storage-broker');
+        if (metadata) await this.scale(metadata, 1); await this.scale(broker, 1);
+        if (metadata && !await this.ready(metadata)) return;
+        for (const member of members.filter(member => ![metadata, broker].includes(member))) await this.scale(member, 1);
+        if (!await this.ready(members.find(member => member.name === 'storage-controller'))) return;
         await this.register();
         if (!(await Promise.all(members.map(member => this.ready(member)))).every(Boolean)) return;
         await this.status({phase: 'Active', replicas: 1});
@@ -150,7 +151,7 @@ export class StorageFleet {
       }
       // Stop the metadata database last. A new request aborts the remaining stop
       // sequence; the next pass brings the full dependency chain back up.
-      for (const member of [...members.slice(2), members[1], members[0]]) {
+      for (const member of [...members].sort((a, b) => (a.name === 'metadata' ? 2 : a.name === 'storage-broker' ? 1 : 0) - (b.name === 'metadata' ? 2 : b.name === 'storage-broker' ? 1 : 0))) {
         if (await this.demand()) return;
         await this.scale(member, 0);
       }

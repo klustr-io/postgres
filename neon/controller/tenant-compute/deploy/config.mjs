@@ -4,6 +4,7 @@ import {parse} from 'yaml';
 import {policy} from '../activity.mjs';
 import {endpointConfig} from '../config.mjs';
 import {applyCatalog} from './catalog.mjs';
+import {identityConfiguration} from './identity.mjs';
 
 const name = value => typeof value === 'string' && /^[a-z][a-z0-9-]{0,38}$/.test(value);
 export function configuration(file = process.env.NEON_CONFIG || '/etc/neon/cluster.yaml') {
@@ -11,6 +12,7 @@ export function configuration(file = process.env.NEON_CONFIG || '/etc/neon/clust
   return normalizeConfiguration(config);
 }
 export function normalizeConfiguration(config) {
+  identityConfiguration(config?.identity);
   if (!config || !name(config.name)) throw Error('A DNS-safe cluster name is required');
   if (!config.s3 || !/^https:\/\//.test(config.s3.endpoint) || !config.s3.bucket || !config.s3.region ||
       !/^[a-zA-Z0-9][a-zA-Z0-9/_-]*$/.test(config.s3.prefix || '')) throw Error('Explicit HTTPS S3 configuration and isolated prefix required');

@@ -40,7 +40,7 @@ services:
       - backend
     tmpfs:
       - /tmp:uid=10001,gid=10001,mode=1770,size=256m
-    image: ghcr.io/klustr-io/neon-compute@sha256:c7d0b5e0a359941fb766253bd8e2b0f8fe6408a6fa855ebf0287070ef280abc8
+    image: ghcr.io/klustr-io/neon-compute@sha256:f84df9577c542dbf3be8a789d301716f77c7d6ac5c79bfd519818834b3427aef
     entrypoint:
       - /bin/sh
       - -ec
@@ -84,7 +84,7 @@ services:
       - backend
     tmpfs:
       - /tmp:uid=10001,gid=10001,mode=1770,size=256m
-    image: ghcr.io/klustr-io/neon-storage-broker@sha256:c66d30b177d651148d2c70e52c9e974a289dca236aa8cfa33896a8ed6cf55208
+    image: ghcr.io/klustr-io/neon-storage-broker@sha256:d2ee7433b77031d3bbaad7a4a6f61d3671307661d09de65e469296b77134dce6
   storage-controller:
     platform: linux/amd64
     restart: unless-stopped
@@ -98,7 +98,7 @@ services:
       - backend
     tmpfs:
       - /tmp:uid=10001,gid=10001,mode=1770,size=256m
-    image: ghcr.io/klustr-io/neon-storage-controller@sha256:4716c664590fea18d9a49bd36502ff9ff6d47352f1a952213b606d1cf04bd13b
+    image: ghcr.io/klustr-io/neon-storage-controller@sha256:0cbbb4f17394e035c5b8838346d1655dd4f99068e535dd78bed4738a814479e7
     entrypoint:
       - /bin/sh
       - -ec
@@ -134,7 +134,7 @@ services:
       - backend
     tmpfs:
       - /tmp:uid=10001,gid=10001,mode=1770,size=256m
-    image: ghcr.io/klustr-io/neon-pageserver@sha256:b5e045980dd183cdb853cfb870696a31bee85e05aba927163b7c78bb20473d53
+    image: ghcr.io/klustr-io/neon-pageserver@sha256:b3a597ad16b77c8a611f8c18481a7b87bb258d919d4d458ad36c5f465373ae28
     entrypoint:
       - /bin/sh
       - -ec
@@ -171,7 +171,7 @@ services:
       - backend
     tmpfs:
       - /tmp:uid=10001,gid=10001,mode=1770,size=256m
-    image: ghcr.io/klustr-io/neon-pageserver@sha256:b5e045980dd183cdb853cfb870696a31bee85e05aba927163b7c78bb20473d53
+    image: ghcr.io/klustr-io/neon-pageserver@sha256:b3a597ad16b77c8a611f8c18481a7b87bb258d919d4d458ad36c5f465373ae28
     entrypoint:
       - /bin/sh
       - -ec
@@ -208,7 +208,7 @@ services:
       - backend
     tmpfs:
       - /tmp:uid=10001,gid=10001,mode=1770,size=256m
-    image: ghcr.io/klustr-io/neon-safekeeper@sha256:102cad9f13f67e1da256d69e5437399ad090e2100c63136a10b3f52b4b0c4b59
+    image: ghcr.io/klustr-io/neon-safekeeper@sha256:0a80018301b8b3d1386e400cb82495f0659bfaaf5b1dc2d75ed3d1fe81dfb0bc
     entrypoint:
       - /bin/sh
       - -ec
@@ -243,7 +243,7 @@ services:
       - backend
     tmpfs:
       - /tmp:uid=10001,gid=10001,mode=1770,size=256m
-    image: ghcr.io/klustr-io/neon-safekeeper@sha256:102cad9f13f67e1da256d69e5437399ad090e2100c63136a10b3f52b4b0c4b59
+    image: ghcr.io/klustr-io/neon-safekeeper@sha256:0a80018301b8b3d1386e400cb82495f0659bfaaf5b1dc2d75ed3d1fe81dfb0bc
     entrypoint:
       - /bin/sh
       - -ec
@@ -278,7 +278,7 @@ services:
       - backend
     tmpfs:
       - /tmp:uid=10001,gid=10001,mode=1770,size=256m
-    image: ghcr.io/klustr-io/neon-safekeeper@sha256:102cad9f13f67e1da256d69e5437399ad090e2100c63136a10b3f52b4b0c4b59
+    image: ghcr.io/klustr-io/neon-safekeeper@sha256:0a80018301b8b3d1386e400cb82495f0659bfaaf5b1dc2d75ed3d1fe81dfb0bc
     entrypoint:
       - /bin/sh
       - -ec
@@ -384,7 +384,7 @@ services:
       - backend
     tmpfs:
       - /tmp:uid=10001,gid=10001,mode=1770,size=256m
-    image: ghcr.io/klustr-io/neon-proxy@sha256:562852b3eecd2726fcdf05d592e5d6692f7cff1c9434c2db2509a29559d49dd5
+    image: ghcr.io/klustr-io/neon-proxy@sha256:034e918af3ca73bb939fdb6d8b4b6c73dce35dcd433f048a35aca9b217194e24
     entrypoint:
       - /bin/sh
       - -ec
@@ -417,7 +417,7 @@ services:
       - backend
     tmpfs:
       - /tmp:uid=10001,gid=10001,mode=1770,size=256m
-    image: ghcr.io/klustr-io/neon-compute@sha256:c7d0b5e0a359941fb766253bd8e2b0f8fe6408a6fa855ebf0287070ef280abc8
+    image: ghcr.io/klustr-io/neon-compute@sha256:f84df9577c542dbf3be8a789d301716f77c7d6ac5c79bfd519818834b3427aef
     profiles:
       - pull
     entrypoint:

@@ -5,7 +5,7 @@ import {configuration, normalizeConfiguration} from './config.mjs';
 import {alwaysOn} from '../activity.mjs';
 import {branchSource, recoveryPolicy, problem} from './recovery.mjs';
 
-const allowed = ['database', 'user', 'size', 'tier', 'profile', 'suspend', 'databasePolicies', 'allowedIps', 'shards', 'replicas', 'lifecycle', 'deletionPolicy', 'backup', 'branchFrom'];
+const allowed = ['database', 'user', 'size', 'tier', 'profile', 'suspend', 'databasePolicies', 'allowedIps', 'shards', 'replicas', 'lifecycle', 'deletionPolicy', 'backup', 'branchFrom', 'identity'];
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export class Databases {
   constructor({api, leader, lifecycle, getEndpoints, configFile, emit}) {
@@ -38,6 +38,8 @@ export class Databases {
     if (!['active', 'suspended', 'retired'].includes(resource.spec.lifecycle || 'active') || !['Retain', 'Delete'].includes(resource.spec.deletionPolicy || 'Retain')) throw problem('INVALID_SPEC');
     if (resource.spec.deletionPolicy === 'Delete' && resource.spec.lifecycle !== 'retired') throw problem('INVALID_SPEC');
     recoveryPolicy(resource.spec.backup);
+    if (resource.spec.identity && (!resource.spec.identity.tenant || !resource.spec.identity.project || Object.values(resource.spec.identity).some(value => typeof value !== 'string' || !/^[a-z][a-z0-9-]{0,62}$/.test(value)))) throw problem('INVALID_SPEC');
+    if (base.replication?.mode === 'synchronous-quorum' && resource.spec.profile && resource.spec.profile !== 'durable') throw problem('ZONE_QUORUM_REQUIRES_DURABLE');
     const seed = base.tenants.find(tenant => tenant.name === resource.metadata.name);
     const {resources: unusedResources, settings: unusedSettings, storagePolicy: unusedPolicy, ...seedPolicy} = seed || {};
     const nodes = base.computeNodes || (base.computeNode ? [base.computeNode] : []);
@@ -209,7 +211,8 @@ export class Databases {
     if (old && (old.metadata.deletionTimestamp || old.spec.lifecycle === 'retired')) throw problem('DATABASE_RETIRED');
     if (old && !isDeepStrictEqual(spec.branchFrom ?? old.spec.branchFrom, old.spec.branchFrom)) throw problem('IMMUTABLE_BRANCH_SOURCE');
     if (old && ['database', 'user'].some(key => spec[key] !== undefined && spec[key] !== old.spec[key])) throw problem('INVALID_SPEC');
-    const candidate = {metadata: {name}, spec: {...old?.spec, ...spec}};
+    const candidate = {metadata: {name}, spec: {...(!old ? this.base().defaults : {}), ...old?.spec, ...spec}};
+    if (candidate.spec.branchFrom && spec.backup === undefined) delete candidate.spec.backup;
     try {this.tenant(candidate, this.base());} catch (error) {throw Object.assign(error, {code: 'INVALID_SPEC'});}
     if (old) return this.api.patch('neondatabases', name, {metadata: {resourceVersion: old.metadata.resourceVersion}, spec: candidate.spec});
     return this.api.create('neondatabases', {apiVersion: 'neon.klustr.io/v1alpha1', kind: 'NeonDatabase', metadata: {name}, spec: candidate.spec});

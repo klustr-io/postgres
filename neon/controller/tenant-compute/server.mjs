@@ -26,6 +26,8 @@ const fleet=databases&&process.env.NEON_FLEET_SCALE_TO_ZERO==='true'?new (await 
 if(fleet)databases.fleet=fleet;
 const recovery=databases?new (await import('./deploy/recovery.mjs')).Recovery({databases,routing:storage,api,leader,lifecycle,getEndpoints:()=>endpoints,emit}):null;
 if(databases){databases.recovery=recovery;lifecycle.wakeGuard=endpoint=>endpoint.databaseResource?databases.assertAvailable(endpoint.databaseResource):undefined;}
+const identity=databases?new (await import('./deploy/identity.mjs')).Identity({configuration:()=>databases.base().identity}):null;
+const credentials=databases?new (await import('./deploy/database-credentials.mjs')).DatabaseCredentials({api,leader,databases,identity,lifecycle,getEndpoints:()=>endpoints,emit}):null;
 let scaler=null;
 let stopDatabaseWatch=null;
 async function refresh(){
@@ -43,6 +45,7 @@ async function poll(){
     if(fleet)void fleet.reconcile();
     if(databases)void databases.reconcile();
     if(recovery)void recovery.reconcile();
+    if(credentials)void credentials.cleanup();
     await refresh();
     for(const uid of lifecycle.activity.keys())
       if(!leader.active||![...endpoints.values()].some(endpoint=>endpoint.uid===uid))await lifecycle.closeActivity({uid});
@@ -62,9 +65,18 @@ function authorized(request,file=process.env.CONTROLLER_API_TOKEN_FILE||'/run/co
   const actual=Buffer.from(request.headers.authorization||'');
   return expected.length>30&&expected.length===actual.length&&timingSafeEqual(expected,actual);
 }
-async function body(request){
+async function managementAuthorized(request){
+  const configured=databases.base().identity;
+  if(!configured || configured.management.allowStaticToken===true){
+    if(authorized(request,process.env.NEON_MANAGEMENT_TOKEN_FILE||'/run/management/token'))return true;
+    if(!configured)return false;
+  }
+  const actor=await identity.management(request);
+  emit('management_authorized',{subject:actor.subject,method:request.method,path:request.url});return true;
+}
+async function body(request,limit=16384){
   const chunks=[];let size=0;
-  for await(const chunk of request){size+=chunk.length;if(size>16384)throw Error('Request too large');chunks.push(chunk);}
+  for await(const chunk of request){size+=chunk.length;if(size>limit)throw Error('Request too large');chunks.push(chunk);}
   return JSON.parse(Buffer.concat(chunks).toString()||'{}');
 }
 function respond(response,status,body){
@@ -75,9 +87,26 @@ const server=https.createServer({key:fs.readFileSync(process.env.CONTROLLER_TLS_
   if(stopping||inFlight>=32)return respond(response,503,{error:'Control plane busy'});
   inFlight++;
   try{
+    const exchange=request.url.match(/^\/v1\/databases\/([a-z][a-z0-9-]{0,38})\/credentials$/);
+    if(credentials&&exchange&&request.method==='POST'){
+      leader.require();return respond(response,201,await credentials.exchange(request,exchange[1],await body(request)));
+    }
+    if(databases&&request.url==='/v1/fleet'){
+      if(!await managementAuthorized(request))return respond(response,401,{error:'Unauthorized'});
+      leader.require();const items=await api.list('neonfleets','');
+      if(items.length!==1)return respond(response,409,{error:'Expected one NeonFleet in this namespace'});
+      const resource=items[0];
+      if(request.method==='GET')return respond(response,200,{name:resource.metadata.name,spec:resource.spec,status:resource.status});
+      if(request.method==='PUT'){
+        const spec=await body(request,131072);try{(await import('./enterprise-fleet.mjs')).validateFleet({metadata:resource.metadata,spec});}catch{ return respond(response,422,{error:'INVALID_FLEET_SPEC'});}
+        const updated=await api.request('PUT',api.path('neonfleets',resource.metadata.name),{...resource,spec});
+        return respond(response,202,{name:updated.metadata.name,generation:updated.metadata.generation});
+      }
+      return respond(response,405,{error:'Unsupported fleet operation'});
+    }
     const backupRoute=request.url.match(/^\/v1\/backups\/([a-z][a-z0-9-]{0,38})$/);
     if(recovery&&backupRoute){
-      if(!authorized(request,process.env.NEON_MANAGEMENT_TOKEN_FILE||'/run/management/token'))return respond(response,401,{error:'Unauthorized'});
+      if(!await managementAuthorized(request))return respond(response,401,{error:'Unauthorized'});
       leader.require();const name=backupRoute[1],resource=await api.get('neonbackups',name);
       if(request.method==='GET')return respond(response,200,{name,spec:resource.spec,status:resource.status||{phase:'Pending'}});
       if(request.method==='DELETE'){
@@ -88,7 +117,7 @@ const server=https.createServer({key:fs.readFileSync(process.env.CONTROLLER_TLS_
     }
     const management=request.url.match(/^\/v1\/databases\/([a-z][a-z0-9-]{0,38})(?:\/(events|suspend|resume|branches|backups|history))?$/);
     if(databases&&management){
-      if(!authorized(request,process.env.NEON_MANAGEMENT_TOKEN_FILE||'/run/management/token'))return respond(response,401,{error:'Unauthorized'});
+      if(!await managementAuthorized(request))return respond(response,401,{error:'Unauthorized'});
       leader.require();
       const name=management[1];
       if(request.method==='GET'&&management[2]==='history')return respond(response,200,await recovery.history(name));
@@ -116,7 +145,7 @@ const server=https.createServer({key:fs.readFileSync(process.env.CONTROLLER_TLS_
         const input=await body(request);
         if(Object.keys(input).some(key=>!['name','backup','lsn','timestamp','size','suspend','profile','allowedIps'].includes(key)))return respond(response,422,{error:'Invalid branch specification'});
         await databases.load();const source=recovery.source(name),parent=source.tenant;
-        const spec={database:parent.database,user:parent.user,size:input.size||parent.size,tier:parent.tier,shards:parent.shards,
+        const spec={...(source.resource.spec.identity?{identity:source.resource.spec.identity}:{}),database:parent.database,user:parent.user,size:input.size||parent.size,tier:parent.tier,shards:parent.shards,
           profile:input.profile||parent.profile,suspend:input.suspend||parent.suspend,allowedIps:input.allowedIps||parent.allowedIps,
           branchFrom:{database:name,...Object.fromEntries(['backup','lsn','timestamp'].filter(key=>input[key]!==undefined).map(key=>[key,input[key]]))}};
         const resource=await databases.put(input.name,spec);void databases.reconcile();return respond(response,202,{name:resource.metadata.name,accepted:true});
@@ -135,13 +164,15 @@ const server=https.createServer({key:fs.readFileSync(process.env.CONTROLLER_TLS_
     if(url.pathname==='/get_endpoint_access_control'){
       const role=url.searchParams.get('role')||'';
       if(Buffer.byteLength(role)>63||!role)return respond(response,404,{error:'Role not found'});
+      if(databases?.base().identity&&!databases.base().identity.database.allowPasswordAuth&&!/^oidc_[a-f0-9]{24}$/.test(role))return respond(response,404,{error:'OIDC credential exchange required'});
       const roles=JSON.parse(secretText(await api.get('secrets',endpoint.rolesSecret),'roles.json'));
-      if(!Object.hasOwn(roles,role)||typeof roles[role]!=='string'||!/^SCRAM-SHA-256\$[0-9]+:/.test(roles[role]))
+      const roleSecret=Object.hasOwn(roles,role)?roles[role]:await credentials?.roleSecret(endpoint,role);
+      if(typeof roleSecret!=='string'||!/^SCRAM-SHA-256\$[0-9]+:/.test(roleSecret))
         return respond(response,404,{error:'Role not found'});
-      const iterations=Number(roles[role].match(/^SCRAM-SHA-256\$([0-9]+):/)[1]);
+      const iterations=Number(roleSecret.match(/^SCRAM-SHA-256\$([0-9]+):/)[1]);
       if(!Number.isSafeInteger(iterations)||iterations<1||iterations>100000)
         return respond(response,404,{error:'Role verifier is outside supported bounds'});
-      return respond(response,200,{role_secret:roles[role],allowed_ips:endpoint.allowedIps,
+      return respond(response,200,{role_secret:roleSecret,allowed_ips:endpoint.allowedIps,
         allowed_vpc_endpoint_ids:[],block_public_connections:false,block_vpc_connections:true,
         project_id:endpoint.projectId,account_id:'self-hosted'});
     }
@@ -157,6 +188,7 @@ const server=https.createServer({key:fs.readFileSync(process.env.CONTROLLER_TLS_
     if(url.pathname===`/endpoints/${id}/jwks`)return respond(response,200,{jwks:[]});
     return respond(response,404,{error:'Unknown API method'});
   }catch(error){
+    if(error.status&&[401,403,422,429].includes(error.status))return respond(response,error.status,{error:error.code||'REQUEST_REJECTED'});
     if(error.status===404)return respond(response,404,{error:'Resource not found'});
     if(error.code==='INVALID_SPEC')return respond(response,422,{error:error.code});
     if(['DATABASE_SUSPENDED','DATABASE_RETIRED','PURGE_CONFIRMATION_REQUIRED','DEPENDENT_BRANCHES_OR_BACKUPS','IMMUTABLE_BRANCH_SOURCE','BACKUP_NAME_CONFLICT','SOURCE_NOT_READY'].includes(error.code))return respond(response,409,{error:error.code});

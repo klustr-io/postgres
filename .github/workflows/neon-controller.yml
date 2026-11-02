@@ -7,6 +7,8 @@ on:
       - neon/packaging/neon/controller-rootfs.mjs
       - neon/packaging/docker/neon/runtime/Dockerfile.tenant-controller
       - neon/packaging/docker/shared/debian.sources
+      - neon/packaging/kubernetes/base/**
+      - neon/packaging/kubernetes/keda/**
       - neon/tests/neon/unit/**
       - .github/workflows/neon-controller.yml
   workflow_dispatch:
