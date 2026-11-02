@@ -95,11 +95,13 @@ impl CertResolver {
         priv_key: PrivateKeyDer<'static>,
         cert_chain: Vec<CertificateDer<'static>>,
     ) -> anyhow::Result<Self> {
-        let (common_name, cert, tls_server_end_point) = process_key_cert(priv_key, cert_chain)?;
+        let (domains, cert, tls_server_end_point) = process_key_cert(priv_key, cert_chain)?;
 
         let mut certs = HashMap::new();
         let default = (cert.clone(), tls_server_end_point);
-        certs.insert(common_name, (cert, tls_server_end_point));
+        for domain in domains {
+            certs.insert(domain, (cert.clone(), tls_server_end_point));
+        }
         Ok(Self { certs, default })
     }
 
@@ -113,8 +115,11 @@ impl CertResolver {
         priv_key: PrivateKeyDer<'static>,
         cert_chain: Vec<CertificateDer<'static>>,
     ) -> anyhow::Result<()> {
-        let (common_name, cert, tls_server_end_point) = process_key_cert(priv_key, cert_chain)?;
-        self.certs.insert(common_name, (cert, tls_server_end_point));
+        let (domains, cert, tls_server_end_point) = process_key_cert(priv_key, cert_chain)?;
+        for domain in domains {
+            self.certs
+                .insert(domain, (cert.clone(), tls_server_end_point));
+        }
         Ok(())
     }
 
@@ -157,7 +162,7 @@ fn parse_key_cert(
 fn process_key_cert(
     priv_key: PrivateKeyDer<'static>,
     cert_chain: Vec<CertificateDer<'static>>,
-) -> anyhow::Result<(String, Arc<CertifiedKey>, TlsServerEndPoint)> {
+) -> anyhow::Result<(Vec<String>, Arc<CertifiedKey>, TlsServerEndPoint)> {
     let key = sign::any_supported_type(&priv_key).context("invalid private key")?;
 
     let first_cert = &cert_chain[0];
@@ -168,32 +173,51 @@ fn process_key_cert(
         .decode::<x509_cert::Certificate>()
         .context("Failed to parse cerficiate")?;
 
-    let common_name = certificate.tbs_certificate.subject.to_string();
-
-    // We need to get the canonical name for this certificate so we can match them against any domain names
-    // seen within the proxy codebase.
-    //
-    // In scram-proxy we use wildcard certificates only, with the database endpoint as the wildcard subdomain, taken from SNI.
-    // We need to remove the wildcard prefix for the purposes of certificate selection.
-    //
-    // auth-broker does not use SNI and instead uses the Neon-Connection-String header.
-    // Auth broker has the subdomain `apiauth` we need to remove for the purposes of validating the Neon-Connection-String.
-    //
-    // Console Redirect proxy does not use any wildcard domains and does not need any certificate selection or conn string
-    // validation, so let's we can continue with any common-name
-    let common_name = if let Some(s) = common_name.strip_prefix("CN=*.") {
-        s.to_string()
-    } else if let Some(s) = common_name.strip_prefix("CN=apiauth.") {
-        s.to_string()
-    } else if let Some(s) = common_name.strip_prefix("CN=") {
-        s.to_string()
+    // Deployment certificates keep their routing identity in SAN. A generic CN
+    // must not silently force SNI clients into the password-hack flow.
+    let names: Vec<String> = if let Some((_, names)) = certificate
+        .tbs_certificate
+        .get::<x509_cert::ext::pkix::SubjectAltName>()
+        .context("invalid certificate SAN")?
+    {
+        names
+            .0
+            .iter()
+            .filter_map(|name| match name {
+                x509_cert::ext::pkix::name::GeneralName::DnsName(name) => {
+                    Some(name.as_str().to_owned())
+                }
+                _ => None,
+            })
+            .collect()
     } else {
-        bail!("Failed to parse common name from certificate")
+        // Preserve older CN-only deployment certificates.
+        vec![
+            certificate
+                .tbs_certificate
+                .subject
+                .to_string()
+                .strip_prefix("CN=")
+                .context("certificate has no routing name")?
+                .to_owned(),
+        ]
     };
+    if names.is_empty() {
+        bail!("certificate has no DNS routing name");
+    }
+    let domains = names
+        .into_iter()
+        .map(|name| {
+            name.strip_prefix("*.")
+                .or_else(|| name.strip_prefix("apiauth."))
+                .unwrap_or(&name)
+                .to_ascii_lowercase()
+        })
+        .collect();
 
     let cert = Arc::new(rustls::sign::CertifiedKey::new(cert_chain, key));
 
-    Ok((common_name, cert, tls_server_end_point))
+    Ok((domains, cert, tls_server_end_point))
 }
 
 impl rustls::server::ResolvesServerCert for CertResolver {

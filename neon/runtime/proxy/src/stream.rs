@@ -93,6 +93,11 @@ impl<S: AsyncRead + Unpin> PqStream<S> {
         self.read_raw_expect(FE_PASSWORD_MESSAGE, MAX_PASSWORD_LENGTH)
             .await
     }
+
+    /// Read bounded native OAuth SASL data without raising the SCRAM/password limit.
+    pub async fn read_oauth_message(&mut self) -> io::Result<&mut [u8]> {
+        self.read_raw_expect(FE_PASSWORD_MESSAGE, 13316).await
+    }
 }
 
 #[derive(Debug)]

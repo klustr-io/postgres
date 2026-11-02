@@ -72,6 +72,7 @@ pub struct Config {
 
     pub(crate) password: Option<Vec<u8>>,
     pub(crate) auth_keys: Option<Box<AuthKeys>>,
+    pub(crate) oauth_token: Option<Vec<u8>>,
     pub(crate) ssl_mode: SslMode,
     pub(crate) connect_timeout: Option<Duration>,
     pub(crate) channel_binding: ChannelBinding,
@@ -90,6 +91,7 @@ impl Config {
             port,
             password: None,
             auth_keys: None,
+            oauth_token: None,
             ssl_mode: SslMode::Prefer,
             connect_timeout: None,
             channel_binding: ChannelBinding::Prefer,
@@ -126,6 +128,13 @@ impl Config {
     /// the `password` method.
     pub fn get_password(&self) -> Option<&[u8]> {
         self.password.as_deref()
+    }
+
+    /// Supply a native bearer token; never included in Debug output.
+    /// Authentication requires TLS and OAUTHBEARER, without password/trust fallback.
+    pub fn oauth_token(&mut self, token: &[u8]) -> &mut Config {
+        self.oauth_token = Some(token.to_vec());
+        self
     }
 
     /// Sets precomputed protocol-specific keys to authenticate with.

@@ -168,7 +168,7 @@ items:
               image: ghcr.io/klustr-io/neon-tenant-controller@sha256:98fd4dde0fff823387022a81d58d593d67df9a4c463649a4cda9d8371afb5fdb
               command:
                 - /usr/local/bin/node
-                - /app/deploy/fleet-operator.mjs
+                - /app/src/composition/FleetOperatorInit.mjs
               env:
                 - name: POD_NAMESPACE
                   valueFrom:

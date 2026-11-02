@@ -59,7 +59,7 @@ items:
               imagePullPolicy: IfNotPresent
               command:
                 - /usr/local/bin/node
-                - /app/deploy/bootstrap.mjs
+                - /app/src/composition/TenantProvisioningInit.mjs
                 - init
               securityContext:
                 allowPrivilegeEscalation: false
@@ -127,7 +127,7 @@ items:
               imagePullPolicy: IfNotPresent
               command:
                 - /usr/local/bin/node
-                - /app/deploy/bootstrap.mjs
+                - /app/src/composition/TenantProvisioningInit.mjs
                 - provision
               securityContext:
                 allowPrivilegeEscalation: false

@@ -68,6 +68,40 @@ impl NeonControlPlaneClient {
         self.endpoint.url().as_str()
     }
 
+    pub(crate) async fn authorize_oauth(
+        &self,
+        ctx: &RequestContext,
+        endpoint: &EndpointId,
+        role: &RoleName,
+        token: &str,
+    ) -> Result<(), GetAuthInfoError> {
+        let request = self
+            .endpoint
+            .request_with_url(reqwest::Method::POST, |url| {
+                url.path_segments_mut().push("authorize_oauth");
+            })
+            .header(AUTHORIZATION, format!("Bearer {}", &self.jwt))
+            .header(X_REQUEST_ID, ctx.session_id().to_string())
+            .query(&[("endpointish", endpoint.as_str())])
+            .timeout(std::time::Duration::from_secs(105))
+            .json(&serde_json::json!({"token": token, "role": role.as_str()}))
+            .build()?;
+        // Tokens stay in the HTTPS body, outside URL/tracing fields.
+        let response = self.endpoint.execute(request).await?;
+        if !response.status().is_success() {
+            return Err(GetAuthInfoError::BadSecret);
+        }
+        #[derive(serde::Deserialize)]
+        struct Authorization {
+            authorized: bool,
+        }
+        let result: Authorization = response.json().await?;
+        if !result.authorized {
+            return Err(GetAuthInfoError::BadSecret);
+        }
+        Ok(())
+    }
+
     async fn get_and_cache_auth_info<T>(
         &self,
         ctx: &RequestContext,
@@ -176,7 +210,15 @@ impl NeonControlPlaneClient {
                 }
             };
 
-            let secret = if body.role_secret.is_empty() {
+            let secret = if let Some(oauth) = body.oauth {
+                if !body.role_secret.is_empty()
+                    || !oauth.issuer.starts_with("https://")
+                    || oauth.scope.is_empty()
+                {
+                    return Err(GetAuthInfoError::BadSecret);
+                }
+                Some(AuthSecret::OAuth(oauth))
+            } else if body.role_secret.is_empty() {
                 None
             } else {
                 let secret = scram::ServerSecret::parse(&body.role_secret)

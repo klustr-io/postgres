@@ -18,6 +18,11 @@ pub(super) async fn authenticate(
     secret: AuthSecret,
 ) -> auth::Result<ComputeCredentials> {
     let scram_keys = match secret {
+        AuthSecret::OAuth(_) => {
+            return Err(auth::AuthError::bad_auth_method(
+                "native OAuth requires SASL",
+            ));
+        }
         AuthSecret::Scram(secret) => {
             debug!("auth endpoint chooses SCRAM");
 

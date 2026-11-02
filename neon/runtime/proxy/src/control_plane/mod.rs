@@ -43,6 +43,14 @@ pub mod mgmt;
 pub(crate) enum AuthSecret {
     /// [SCRAM](crate::scram) authentication info.
     Scram(scram::ServerSecret),
+    /// Native PostgreSQL OAuth policy; contains no bearer credentials.
+    OAuth(OAuthConfig),
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, serde::Deserialize)]
+pub(crate) struct OAuthConfig {
+    pub issuer: String,
+    pub scope: String,
 }
 
 #[derive(Default)]
@@ -162,6 +170,16 @@ impl EndpointAccessControl {
 /// This will allocate per each call, but the http requests alone
 /// already require a few allocations, so it should be fine.
 pub(crate) trait ControlPlaneApi {
+    /// Authorize before compute wake. Unsupported providers fail closed.
+    async fn authorize_oauth(
+        &self,
+        _ctx: &RequestContext,
+        _endpoint: &EndpointId,
+        _role: &RoleName,
+        _token: &str,
+    ) -> Result<(), errors::GetAuthInfoError> {
+        Err(errors::GetAuthInfoError::BadSecret)
+    }
     async fn get_role_access_control(
         &self,
         ctx: &RequestContext,

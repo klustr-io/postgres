@@ -72,6 +72,7 @@ struct RequestContextInner {
 
 #[derive(Clone, Debug)]
 pub(crate) enum AuthMethod {
+    OAuthBearer,
     // aka link
     ConsoleRedirect,
     ScramSha256,

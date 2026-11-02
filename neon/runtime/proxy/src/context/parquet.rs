@@ -144,6 +144,7 @@ impl From<&RequestContextInner> for RequestData {
                 super::AuthMethod::ScramSha256Plus => "scram_sha_256_plus",
                 super::AuthMethod::Cleartext => "cleartext",
                 super::AuthMethod::Jwt => "jwt",
+                super::AuthMethod::OAuthBearer => "oauth_bearer",
             }),
             jwt_issuer: value.jwt_issuer.clone(),
             protocol: value.protocol.as_str(),

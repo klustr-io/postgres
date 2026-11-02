@@ -13,6 +13,15 @@
     "yaml": "2.8.3"
   },
   "scripts": {
-    "start": "node server.mjs"
+    "start": "node src/composition/ControllerInit.mjs",
+    "lint": "node ../../dev/quality/controller-check.mjs",
+    "architecture": "node ../../dev/quality/ArchitectureCheck.mjs",
+    "test": "cd ../../.. && node --test neon/tests/neon/unit/*.test.mjs"
+  },
+  "overrides": {
+    "minimatch": "11.0.1"
+  },
+  "devDependencies": {
+    "eslint": "10.14.0"
   }
 }

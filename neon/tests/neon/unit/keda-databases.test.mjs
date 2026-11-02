@@ -1,14 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import grpc from '../../../controller/tenant-compute/node_modules/@grpc/grpc-js/build/src/index.js';
-import {protocol, startScaler} from '../../../controller/tenant-compute/keda/scaler.mjs';
-import {Databases} from '../../../controller/tenant-compute/deploy/databases.mjs';
-import {configuration} from '../../../controller/tenant-compute/deploy/config.mjs';
+import {KedaProtocol as protocol, KedaScalerInit as startScaler} from '../../../controller/tenant-compute/src/infrastructure/keda/KedaScaler.mjs';
+import {ManagedDatabasesInit} from '../../../controller/tenant-compute/src/composition/ManagedDatabasesInit.mjs';
+import {ConfigurationFile as configuration} from '../../../controller/tenant-compute/src/infrastructure/configuration/ConfigurationFile.mjs';
 
 function manager() {
   const base = configuration('neon/packaging/compose/config/cluster.yaml'); base.computeNode = 'worker';
-  const databases = new Databases({api: {namespace: 'test', optional: async () => null}, leader: {active: true, require() {}},
-    lifecycle: {}, getEndpoints: () => new Map(), emit() {}});
+  const {databases} = ManagedDatabasesInit({api: {namespace: 'test', optional: async () => null, list: async () => []}, leader: {active: true, require() {}},
+    lifecycle: {}, getEndpoints: () => new Map(), emit() {}, enableFleet: false, configFile: 'neon/packaging/compose/config/cluster.yaml',
+    publishDemand() {}, provision: async () => {throw Error('Unexpected provisioning');}});
   databases.base = () => structuredClone(base);
   return databases;
 }

@@ -134,6 +134,9 @@ where
         .map_err(Error::encode)?;
 
     stream.inner.flush().await.map_err(Error::io)?;
+    if let Some(token) = config.oauth_token.as_deref() {
+        return authenticate_oauth(stream, token, config).await;
+    }
     match stream.try_next().await.map_err(Error::io)? {
         Some(Message::AuthenticationOk) => {
             can_skip_channel_binding(config)?;
@@ -173,6 +176,65 @@ where
         Some(Message::ErrorResponse(body)) => Err(Error::db(body)),
         Some(_) => Err(Error::unexpected_message()),
         None => Err(Error::closed()),
+    }
+}
+
+async fn authenticate_oauth<S, T>(
+    stream: &mut StartupStream<S, T>,
+    token: &[u8],
+    config: &Config,
+) -> Result<(), Error>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+    T: TlsStream + Unpin,
+{
+    if !matches!(stream.inner.get_ref(), MaybeTlsStream::Tls(_))
+        || token.is_empty()
+        || token.len() > 12288
+    {
+        return Err(Error::authentication(
+            "native OAuth requires TLS and a bounded bearer token".into(),
+        ));
+    }
+    can_skip_channel_binding(config)?; // OAUTHBEARER has no channel binding variant.
+    let body = match stream.try_next().await.map_err(Error::io)? {
+        Some(Message::AuthenticationSasl(body)) => body,
+        Some(Message::ErrorResponse(body)) => return Err(Error::db(body)),
+        _ => {
+            return Err(Error::authentication(
+                "backend did not require native OAuth".into(),
+            ));
+        }
+    };
+    let mut methods = body.mechanisms();
+    let mut supported = false;
+    while let Some(method) = methods.next().map_err(Error::parse)? {
+        supported |= method == "OAUTHBEARER";
+    }
+    if !supported {
+        return Err(Error::authentication(
+            "backend did not offer OAUTHBEARER".into(),
+        ));
+    }
+    let mut response = b"n,,\x01auth=Bearer ".to_vec();
+    response.extend_from_slice(token);
+    response.extend_from_slice(b"\x01\x01");
+    frontend::sasl_initial_response("OAUTHBEARER", &response, stream.inner.write_buffer_mut())
+        .map_err(Error::encode)?;
+    stream.inner.flush().await.map_err(Error::io)?;
+    match stream.try_next().await.map_err(Error::io)? {
+        Some(Message::AuthenticationOk) => Ok(()),
+        Some(Message::AuthenticationSaslContinue(_)) => {
+            frontend::sasl_response(b"\x01", stream.inner.write_buffer_mut())
+                .map_err(Error::encode)?;
+            stream.inner.flush().await.map_err(Error::io)?;
+            match stream.try_next().await.map_err(Error::io)? {
+                Some(Message::ErrorResponse(body)) => Err(Error::db(body)),
+                _ => Err(Error::authentication("backend OAuth rejected".into())),
+            }
+        }
+        Some(Message::ErrorResponse(body)) => Err(Error::db(body)),
+        _ => Err(Error::unexpected_message()),
     }
 }
 

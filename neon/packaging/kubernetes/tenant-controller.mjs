@@ -25,8 +25,10 @@ export function controllerResources({namespace,controllerImage,proxyImage}){
         securityContext:containerSecurity,readinessProbe:{httpGet:{path:'/readyz',port:9090},periodSeconds:1},
         livenessProbe:{httpGet:{path:'/livez',port:9090},periodSeconds:10},
         volumeMounts:[{name:'tls',mountPath:'/run/controller-tls',readOnly:true},
+          {name:'trust',mountPath:'/run/trust',readOnly:true},
           {name:'auth',mountPath:'/run/controller-auth',readOnly:true},{name:'tmp',mountPath:'/tmp'}]}],
       volumes:[{name:'tls',secret:{secretName:'neon-controller-tls',defaultMode:288}},
+        {name:'trust',secret:{secretName:'neon-service-ca',defaultMode:292}},
         {name:'auth',secret:{secretName:'neon-controller-auth',defaultMode:288}},
         {name:'tmp',emptyDir:{sizeLimit:'64Mi'}}]}}}};
   const proxy={apiVersion:'apps/v1',kind:'Deployment',metadata:metadata('neon-proxy'),spec:{replicas:1,
@@ -57,7 +59,7 @@ export function controllerResources({namespace,controllerImage,proxyImage}){
     controller,proxy,service('neon-controller','neon-tenant-controller',8080),service('neon-proxy','neon-proxy',5432),
     {apiVersion:'networking.k8s.io/v1',kind:'NetworkPolicy',metadata:metadata('neon-controller-ingress'),spec:{
       podSelector:{matchLabels:{'app.kubernetes.io/name':'neon-tenant-controller'}},policyTypes:['Ingress'],
-      ingress:[{from:[{podSelector:{matchLabels:{'app.kubernetes.io/name':'neon-proxy'}}}],ports:[{protocol:'TCP',port:8080}]}]}},
+      ingress:[{from:['neon-proxy','neon-compute'].map(name=>({podSelector:{matchLabels:{'app.kubernetes.io/name':name}}})),ports:[{protocol:'TCP',port:8080}]}]}},
     {apiVersion:'networking.k8s.io/v1',kind:'NetworkPolicy',metadata:metadata('neon-compute-ingress'),spec:{
       podSelector:{matchLabels:{'app.kubernetes.io/name':'neon-compute'}},policyTypes:['Ingress'],
       ingress:[{from:['neon-proxy','neon-tenant-controller'].map(name=>({podSelector:{matchLabels:{'app.kubernetes.io/name':name}}})),

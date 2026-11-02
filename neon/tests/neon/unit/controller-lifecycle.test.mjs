@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {Lifecycle} from '../../../controller/tenant-compute/lifecycle.mjs';
-import {Leadership} from '../../../controller/tenant-compute/kubernetes.mjs';
+import {Lifecycle} from '../../../controller/tenant-compute/src/infrastructure/compute/Lifecycle.mjs';
+import {Leadership} from '../../../controller/tenant-compute/src/infrastructure/kubernetes/Kubernetes.mjs';
 const OWNER='neon.klustr.io/endpoint-uid',ADMISSION='neon.klustr.io/admission';
 function fixture({clients=0,drainError=false}={}){
   const endpoint={name:'neon-ep-test',uid:'owner-one',endpointId:'ep-test',status:{phase:'Active'},profile:'durable'};

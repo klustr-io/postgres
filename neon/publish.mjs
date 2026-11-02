@@ -16,6 +16,9 @@ function search(folder){for(const e of fs.readdirSync(folder,{withFileTypes:true
 }}
 search(path.resolve(arg('--input')||'build'));assert.equal(matches.length,1,'Expected one successful build artifact');
 const buildFile=matches[0],build=read(buildFile),version=arg('--version')||build.version;
+assert.equal(build.native_oauth?.passed,true,'Native OAuth qualification must pass before publication');
+assert.equal(build.native_oauth?.opaqueIntrospection,true,'Opaque token introspection qualification must pass before publication');
+assert.equal(build.native_oauth?.managementIntrospection,true,'Management introspection qualification must pass before publication');
 assert(/^[a-z0-9][a-z0-9_.-]{0,110}$/.test(version),'Invalid version');
 const repository=(process.env.GITHUB_REPOSITORY||'klustr-io/postgres').toLowerCase();assert.equal(repository,'klustr-io/postgres');
 const commit=process.env.GITHUB_SHA||build.base_commit;assert(/^[a-f0-9]{40}$/.test(commit));
@@ -24,7 +27,8 @@ assert.deepEqual(Object.keys(build.images).sort(),[...roles].sort());
 const output=path.resolve(arg('--output')||'build/published-release');fs.mkdirSync(output,{recursive:true});
 const manifest={schema_version:1,version,platform:'linux/amd64',source_repository:'https://github.com/'+repository,
   source_commit:commit,source_digest:build.source_digest,created_at:new Date().toISOString(),production_qualified:false,
-  validation:'Source build, PostgreSQL regressions, protocol tests and non-root/read-only executable smoke. Production HA/RPO/performance qualification remains open.',images:{}};
+  validation:'Source build, PostgreSQL regressions, native libpq/proxy/validator OAuth integration, protocol tests and non-root/read-only executable smoke. Production HA/RPO/performance qualification remains open.',
+  native_oauth:build.native_oauth,images:{}};
 const archives={};
 for(const role of roles){
   const file=path.join(path.dirname(buildFile),'images',role+'.oci.tar');assert.equal(sha(fs.readFileSync(file)),build.images[role].archive_sha256,'Archive checksum: '+role);

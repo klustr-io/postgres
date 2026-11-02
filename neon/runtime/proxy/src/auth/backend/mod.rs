@@ -167,10 +167,21 @@ impl ComputeUserInfo {
     }
 }
 
-#[cfg_attr(test, derive(Debug))]
 pub(crate) enum ComputeCredentialKeys {
     AuthKeys(AuthKeys),
     JwtPayload(Vec<u8>),
+    OAuthBearer(Vec<u8>),
+}
+
+#[cfg(test)]
+impl std::fmt::Debug for ComputeCredentialKeys {
+    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        output.write_str(match self {
+            Self::AuthKeys(_) => "AuthKeys(REDACTED)",
+            Self::JwtPayload(_) => "JwtPayload(REDACTED)",
+            Self::OAuthBearer(_) => "OAuthBearer(REDACTED)",
+        })
+    }
 }
 
 impl TryFrom<ComputeUserInfoMaybeEndpoint> for ComputeUserInfo {
@@ -246,6 +257,22 @@ async fn auth_quirks(
         AuthSecret::Scram(scram::ServerSecret::mock(rand::random()))
     };
 
+    if let AuthSecret::OAuth(policy) = &secret {
+        if allow_cleartext || unauthenticated_password.is_some() {
+            return Err(auth::AuthError::bad_auth_method(
+                "native OAuth requires PostgreSQL SASL over TLS",
+            ));
+        }
+        return super::oauth::authenticate(
+            ctx,
+            api,
+            info,
+            client,
+            policy,
+            config.scram_protocol_timeout,
+        )
+        .await;
+    }
     match authenticate_with_secret(
         ctx,
         secret,

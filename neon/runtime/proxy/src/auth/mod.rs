@@ -14,6 +14,7 @@ use password_hack::PasswordHackPayload;
 pub(crate) use password_hack::parse_endpoint_param;
 
 mod flow;
+mod oauth;
 use std::io;
 use std::net::IpAddr;
 

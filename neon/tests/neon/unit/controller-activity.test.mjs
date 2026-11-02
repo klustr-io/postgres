@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {Activity,alwaysOn} from '../../../controller/tenant-compute/activity.mjs';
+import {Activity,AlwaysOn as alwaysOn} from '../../../controller/tenant-compute/src/domain/compute/Activity.mjs';
 const database=(name,sessions='1',active_ms='0')=>({name,sessions,active_ms,reset:'same'});
 const sample=(clients=[],databases=[database('app')])=>({clients,databases,blockers:false});
 test('Five-minute policy suspends idle pooled connections only after observed SQL inactivity',()=>{

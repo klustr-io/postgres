@@ -146,6 +146,9 @@ items:
                 - name: tls
                   mountPath: /run/controller-tls
                   readOnly: true
+                - name: trust
+                  mountPath: /run/trust
+                  readOnly: true
                 - name: auth
                   mountPath: /run/controller-auth
                   readOnly: true
@@ -159,6 +162,10 @@ items:
               secret:
                 secretName: neon-controller-tls
                 defaultMode: 288
+            - name: trust
+              secret:
+                secretName: neon-service-ca
+                defaultMode: 292
             - name: auth
               secret:
                 secretName: neon-controller-auth
@@ -316,6 +323,9 @@ items:
             - podSelector:
                 matchLabels:
                   app.kubernetes.io/name: neon-proxy
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: neon-compute
           ports:
             - protocol: TCP
               port: 8080

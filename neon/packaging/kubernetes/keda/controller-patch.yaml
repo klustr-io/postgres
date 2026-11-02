@@ -25,9 +25,6 @@ spec:
             - name: management
               mountPath: /run/management
               readOnly: true
-            - name: trust
-              mountPath: /run/trust
-              readOnly: true
             - name: bootstrap-ready
               mountPath: /run/bootstrap-ready
               readOnly: true
@@ -35,10 +32,6 @@ spec:
         - name: management
           secret:
             secretName: neon-management-auth
-            defaultMode: 288
-        - name: trust
-          secret:
-            secretName: neon-service-ca
             defaultMode: 288
         - name: bootstrap-ready
           secret:

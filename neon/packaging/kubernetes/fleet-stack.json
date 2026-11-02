@@ -1,0 +1,2756 @@
+{
+  "resources": [
+    {
+      "apiVersion": "v1",
+      "kind": "ServiceAccount",
+      "metadata": {
+        "name": "neon-bootstrap",
+        "namespace": "neon"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "ServiceAccount",
+      "metadata": {
+        "name": "neon-tenant-controller",
+        "namespace": "neon"
+      }
+    },
+    {
+      "apiVersion": "rbac.authorization.k8s.io/v1",
+      "kind": "Role",
+      "metadata": {
+        "name": "neon-bootstrap",
+        "namespace": "neon"
+      },
+      "rules": [
+        {
+          "apiGroups": [
+            ""
+          ],
+          "resources": [
+            "secrets",
+            "configmaps"
+          ],
+          "verbs": [
+            "get",
+            "create",
+            "patch"
+          ]
+        }
+      ]
+    },
+    {
+      "apiVersion": "rbac.authorization.k8s.io/v1",
+      "kind": "Role",
+      "metadata": {
+        "name": "neon-database-controller",
+        "namespace": "neon"
+      },
+      "rules": [
+        {
+          "apiGroups": [
+            "neon.klustr.io"
+          ],
+          "resources": [
+            "neondatabases",
+            "neondatabases/status",
+            "neonstoragefleets",
+            "neonstoragefleets/status"
+          ],
+          "verbs": [
+            "get",
+            "list",
+            "watch",
+            "create",
+            "patch"
+          ]
+        },
+        {
+          "apiGroups": [
+            "neon.klustr.io"
+          ],
+          "resources": [
+            "neonbackups",
+            "neonbackups/status"
+          ],
+          "verbs": [
+            "get",
+            "list",
+            "create",
+            "patch",
+            "delete"
+          ]
+        },
+        {
+          "apiGroups": [
+            "neon.klustr.io"
+          ],
+          "resources": [
+            "neonfleets"
+          ],
+          "verbs": [
+            "get",
+            "list",
+            "patch",
+            "update"
+          ]
+        },
+        {
+          "apiGroups": [
+            ""
+          ],
+          "resources": [
+            "secrets"
+          ],
+          "verbs": [
+            "get",
+            "list",
+            "create",
+            "delete"
+          ]
+        },
+        {
+          "apiGroups": [
+            "apps"
+          ],
+          "resources": [
+            "statefulsets"
+          ],
+          "verbs": [
+            "get",
+            "list",
+            "patch"
+          ]
+        },
+        {
+          "apiGroups": [
+            "keda.sh"
+          ],
+          "resources": [
+            "scaledobjects"
+          ],
+          "verbs": [
+            "get",
+            "list",
+            "create",
+            "patch"
+          ]
+        },
+        {
+          "apiGroups": [
+            ""
+          ],
+          "resources": [
+            "configmaps"
+          ],
+          "verbs": [
+            "create"
+          ]
+        }
+      ]
+    },
+    {
+      "apiVersion": "rbac.authorization.k8s.io/v1",
+      "kind": "Role",
+      "metadata": {
+        "name": "neon-keda-scale",
+        "namespace": "neon"
+      },
+      "rules": [
+        {
+          "apiGroups": [
+            "neon.klustr.io"
+          ],
+          "resources": [
+            "neondatabases",
+            "neondatabases/scale",
+            "neonstoragefleets",
+            "neonstoragefleets/scale"
+          ],
+          "verbs": [
+            "get",
+            "list",
+            "watch",
+            "update",
+            "patch"
+          ]
+        },
+        {
+          "apiGroups": [
+            ""
+          ],
+          "resourceNames": [
+            "neon-keda-client-tls"
+          ],
+          "resources": [
+            "secrets"
+          ],
+          "verbs": [
+            "get"
+          ]
+        }
+      ]
+    },
+    {
+      "apiVersion": "rbac.authorization.k8s.io/v1",
+      "kind": "Role",
+      "metadata": {
+        "name": "neon-tenant-controller",
+        "namespace": "neon"
+      },
+      "rules": [
+        {
+          "apiGroups": [
+            ""
+          ],
+          "resources": [
+            "configmaps"
+          ],
+          "verbs": [
+            "get",
+            "list",
+            "patch"
+          ]
+        },
+        {
+          "apiGroups": [
+            ""
+          ],
+          "resources": [
+            "secrets",
+            "services"
+          ],
+          "verbs": [
+            "get",
+            "create",
+            "patch"
+          ]
+        },
+        {
+          "apiGroups": [
+            ""
+          ],
+          "resources": [
+            "pods"
+          ],
+          "verbs": [
+            "get",
+            "list"
+          ]
+        },
+        {
+          "apiGroups": [
+            "apps"
+          ],
+          "resources": [
+            "deployments"
+          ],
+          "verbs": [
+            "get",
+            "create",
+            "patch"
+          ]
+        },
+        {
+          "apiGroups": [
+            "coordination.k8s.io"
+          ],
+          "resources": [
+            "leases"
+          ],
+          "verbs": [
+            "get",
+            "create",
+            "patch"
+          ]
+        },
+        {
+          "apiGroups": [
+            "discovery.k8s.io"
+          ],
+          "resources": [
+            "endpointslices"
+          ],
+          "verbs": [
+            "get",
+            "list"
+          ]
+        }
+      ]
+    },
+    {
+      "apiVersion": "rbac.authorization.k8s.io/v1",
+      "kind": "RoleBinding",
+      "metadata": {
+        "name": "neon-bootstrap",
+        "namespace": "neon"
+      },
+      "roleRef": {
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "Role",
+        "name": "neon-bootstrap"
+      },
+      "subjects": [
+        {
+          "kind": "ServiceAccount",
+          "name": "neon-bootstrap",
+          "namespace": "neon"
+        }
+      ]
+    },
+    {
+      "apiVersion": "rbac.authorization.k8s.io/v1",
+      "kind": "RoleBinding",
+      "metadata": {
+        "name": "neon-database-controller",
+        "namespace": "neon"
+      },
+      "roleRef": {
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "Role",
+        "name": "neon-database-controller"
+      },
+      "subjects": [
+        {
+          "kind": "ServiceAccount",
+          "name": "neon-tenant-controller",
+          "namespace": "neon"
+        }
+      ]
+    },
+    {
+      "apiVersion": "rbac.authorization.k8s.io/v1",
+      "kind": "RoleBinding",
+      "metadata": {
+        "name": "neon-keda-scale",
+        "namespace": "neon"
+      },
+      "roleRef": {
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "Role",
+        "name": "neon-keda-scale"
+      },
+      "subjects": [
+        {
+          "kind": "ServiceAccount",
+          "name": "keda-operator",
+          "namespace": "keda"
+        }
+      ]
+    },
+    {
+      "apiVersion": "rbac.authorization.k8s.io/v1",
+      "kind": "RoleBinding",
+      "metadata": {
+        "name": "neon-tenant-controller",
+        "namespace": "neon"
+      },
+      "roleRef": {
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "Role",
+        "name": "neon-tenant-controller"
+      },
+      "subjects": [
+        {
+          "kind": "ServiceAccount",
+          "name": "neon-tenant-controller",
+          "namespace": "neon"
+        }
+      ]
+    },
+    {
+      "apiVersion": "v1",
+      "data": {
+        "cluster.yaml": "name: neon\ndomain: db.local\ncomputeImage: ghcr.io/klustr-io/neon-compute@sha256:f84df9577c542dbf3be8a789d301716f77c7d6ac5c79bfd519818834b3427aef\nclientCIDRs:\n  - 10.0.0.0/8\n  - 172.16.0.0/12\n  - 192.168.0.0/16\n  - 127.0.0.1/32\nstorage:\n  pageservers:\n    - id: 1\n      host: pageserver\n      zone: zone-1\n    - id: 2\n      host: pageserver-2\n      zone: zone-2\ns3:\n  endpoint: https://s3.example.com\n  region: us-east-1\n  bucket: replace-me\n  prefix: neon/my-cluster\ntenants: []\ncomputeNode: replace-with-ready-amd64-node\n"
+      },
+      "kind": "ConfigMap",
+      "metadata": {
+        "name": "neon-cluster",
+        "namespace": "neon"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "metadata",
+        "namespace": "neon"
+      },
+      "spec": {
+        "clusterIP": "None",
+        "ports": [
+          {
+            "name": "postgres",
+            "port": 5432,
+            "targetPort": 5432
+          }
+        ],
+        "publishNotReadyAddresses": true,
+        "selector": {
+          "app": "metadata"
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "neon-controller",
+        "namespace": "neon"
+      },
+      "spec": {
+        "ports": [
+          {
+            "name": "api",
+            "port": 8080,
+            "targetPort": 8080
+          },
+          {
+            "name": "hooks",
+            "port": 9090,
+            "targetPort": 9090
+          },
+          {
+            "name": "keda",
+            "port": 9091,
+            "targetPort": 9091
+          }
+        ],
+        "selector": {
+          "app.kubernetes.io/name": "neon-tenant-controller"
+        },
+        "type": "ClusterIP"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "neon-proxy",
+        "namespace": "neon"
+      },
+      "spec": {
+        "ports": [
+          {
+            "port": 5432,
+            "targetPort": 5432
+          }
+        ],
+        "selector": {
+          "app.kubernetes.io/name": "neon-proxy"
+        },
+        "type": "ClusterIP"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "pageserver",
+        "namespace": "neon"
+      },
+      "spec": {
+        "clusterIP": "None",
+        "ports": [
+          {
+            "name": "postgres",
+            "port": 6400,
+            "targetPort": 6400
+          },
+          {
+            "name": "http",
+            "port": 9898,
+            "targetPort": 9898
+          }
+        ],
+        "publishNotReadyAddresses": true,
+        "selector": {
+          "app": "pageserver"
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "pageserver-2",
+        "namespace": "neon"
+      },
+      "spec": {
+        "clusterIP": "None",
+        "ports": [
+          {
+            "name": "postgres",
+            "port": 6400,
+            "targetPort": 6400
+          },
+          {
+            "name": "http",
+            "port": 9898,
+            "targetPort": 9898
+          }
+        ],
+        "publishNotReadyAddresses": true,
+        "selector": {
+          "app": "pageserver-2"
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "safekeeper-1",
+        "namespace": "neon"
+      },
+      "spec": {
+        "clusterIP": "None",
+        "ports": [
+          {
+            "name": "postgres",
+            "port": 5454,
+            "targetPort": 5454
+          },
+          {
+            "name": "http",
+            "port": 7676,
+            "targetPort": 7676
+          }
+        ],
+        "publishNotReadyAddresses": true,
+        "selector": {
+          "app": "safekeeper-1"
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "safekeeper-2",
+        "namespace": "neon"
+      },
+      "spec": {
+        "clusterIP": "None",
+        "ports": [
+          {
+            "name": "postgres",
+            "port": 5454,
+            "targetPort": 5454
+          },
+          {
+            "name": "http",
+            "port": 7676,
+            "targetPort": 7676
+          }
+        ],
+        "publishNotReadyAddresses": true,
+        "selector": {
+          "app": "safekeeper-2"
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "safekeeper-3",
+        "namespace": "neon"
+      },
+      "spec": {
+        "clusterIP": "None",
+        "ports": [
+          {
+            "name": "postgres",
+            "port": 5454,
+            "targetPort": 5454
+          },
+          {
+            "name": "http",
+            "port": 7676,
+            "targetPort": 7676
+          }
+        ],
+        "publishNotReadyAddresses": true,
+        "selector": {
+          "app": "safekeeper-3"
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "storage-broker",
+        "namespace": "neon"
+      },
+      "spec": {
+        "ports": [
+          {
+            "name": "grpc",
+            "port": 50051,
+            "targetPort": 50051
+          }
+        ],
+        "selector": {
+          "app": "storage-broker"
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "storage-controller",
+        "namespace": "neon"
+      },
+      "spec": {
+        "ports": [
+          {
+            "name": "http",
+            "port": 1234,
+            "targetPort": 1234
+          }
+        ],
+        "selector": {
+          "app": "storage-controller"
+        }
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "neon-proxy",
+        "namespace": "neon"
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "neon-proxy"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/name": "neon-proxy"
+            }
+          },
+          "spec": {
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "args": [
+                  "--proxy",
+                  "0.0.0.0:5432",
+                  "--auth-backend",
+                  "control-plane",
+                  "--auth-endpoint",
+                  "https://neon-controller:8080/",
+                  "--http",
+                  "0.0.0.0:7001",
+                  "--tls-key",
+                  "/run/proxy-tls/tls.key",
+                  "--tls-cert",
+                  "/run/proxy-tls/tls.crt",
+                  "--wake-compute-cache",
+                  "size=0"
+                ],
+                "env": [
+                  {
+                    "name": "NEON_PROXY_TO_CONTROLPLANE_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "token",
+                        "name": "neon-controller-auth"
+                      }
+                    }
+                  },
+                  {
+                    "name": "SSL_CERT_FILE",
+                    "value": "/run/trust/ca.crt"
+                  },
+                  {
+                    "name": "OTEL_SDK_DISABLED",
+                    "value": "true"
+                  }
+                ],
+                "image": "ghcr.io/klustr-io/neon-proxy@sha256:034e918af3ca73bb939fdb6d8b4b6c73dce35dcd433f048a35aca9b217194e24",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "proxy",
+                "ports": [
+                  {
+                    "containerPort": 5432,
+                    "name": "postgres"
+                  },
+                  {
+                    "containerPort": 7001,
+                    "name": "metrics"
+                  }
+                ],
+                "readinessProbe": {
+                  "httpGet": {
+                    "path": "/v1/status",
+                    "port": 7001
+                  },
+                  "periodSeconds": 1
+                },
+                "resources": {
+                  "limits": {
+                    "cpu": "2",
+                    "memory": "512Mi"
+                  },
+                  "requests": {
+                    "cpu": "100m",
+                    "memory": "128Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true
+                },
+                "volumeMounts": [
+                  {
+                    "mountPath": "/run/proxy-tls",
+                    "name": "tls",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/run/trust",
+                    "name": "ca",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/tmp",
+                    "name": "tmp"
+                  }
+                ]
+              }
+            ],
+            "nodeSelector": {
+              "kubernetes.io/arch": "amd64",
+              "kubernetes.io/os": "linux"
+            },
+            "securityContext": {
+              "fsGroup": 10001,
+              "runAsGroup": 10001,
+              "runAsNonRoot": true,
+              "runAsUser": 10001,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "terminationGracePeriodSeconds": 60,
+            "volumes": [
+              {
+                "name": "tls",
+                "secret": {
+                  "defaultMode": 288,
+                  "secretName": "neon-proxy-tls"
+                }
+              },
+              {
+                "name": "ca",
+                "secret": {
+                  "defaultMode": 292,
+                  "secretName": "neon-service-ca"
+                }
+              },
+              {
+                "emptyDir": {
+                  "sizeLimit": "128Mi"
+                },
+                "name": "tmp"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "neon-tenant-controller",
+        "namespace": "neon"
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "neon-tenant-controller"
+          }
+        },
+        "strategy": {
+          "type": "Recreate"
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/name": "neon-tenant-controller"
+            }
+          },
+          "spec": {
+            "containers": [
+              {
+                "env": [
+                  {
+                    "name": "NEON_DATABASE_API",
+                    "value": "true"
+                  },
+                  {
+                    "name": "NEON_PLATFORM",
+                    "value": "kubernetes"
+                  },
+                  {
+                    "name": "NEON_FLEET_SCALE_TO_ZERO",
+                    "value": "true"
+                  },
+                  {
+                    "name": "NEON_STATE",
+                    "value": "/tmp/provision-state"
+                  },
+                  {
+                    "name": "POD_NAMESPACE",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "fieldPath": "metadata.namespace"
+                      }
+                    }
+                  },
+                  {
+                    "name": "POD_NAME",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "fieldPath": "metadata.name"
+                      }
+                    }
+                  },
+                  {
+                    "name": "NEON_DEPLOYMENT_CONFIG",
+                    "value": "/etc/neon/cluster.yaml"
+                  }
+                ],
+                "image": "ghcr.io/klustr-io/neon-tenant-controller@sha256:98fd4dde0fff823387022a81d58d593d67df9a4c463649a4cda9d8371afb5fdb",
+                "imagePullPolicy": "IfNotPresent",
+                "livenessProbe": {
+                  "httpGet": {
+                    "path": "/livez",
+                    "port": 9090
+                  },
+                  "periodSeconds": 10
+                },
+                "name": "controller",
+                "ports": [
+                  {
+                    "containerPort": 9091,
+                    "name": "keda"
+                  },
+                  {
+                    "containerPort": 8080,
+                    "name": "api"
+                  },
+                  {
+                    "containerPort": 9090,
+                    "name": "health"
+                  }
+                ],
+                "readinessProbe": {
+                  "httpGet": {
+                    "path": "/readyz",
+                    "port": 9090
+                  },
+                  "periodSeconds": 1
+                },
+                "resources": {
+                  "limits": {
+                    "cpu": "1",
+                    "memory": "512Mi"
+                  },
+                  "requests": {
+                    "cpu": "100m",
+                    "memory": "128Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true
+                },
+                "volumeMounts": [
+                  {
+                    "mountPath": "/run/management",
+                    "name": "management",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/run/bootstrap-ready",
+                    "name": "bootstrap-ready",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/run/controller-tls",
+                    "name": "tls",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/run/trust",
+                    "name": "trust",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/run/controller-auth",
+                    "name": "auth",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/tmp",
+                    "name": "tmp"
+                  },
+                  {
+                    "mountPath": "/etc/neon",
+                    "name": "config",
+                    "readOnly": true
+                  }
+                ]
+              }
+            ],
+            "nodeSelector": {
+              "kubernetes.io/arch": "amd64",
+              "kubernetes.io/os": "linux"
+            },
+            "securityContext": {
+              "fsGroup": 10001,
+              "runAsGroup": 10001,
+              "runAsNonRoot": true,
+              "runAsUser": 10001,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "serviceAccountName": "neon-tenant-controller",
+            "terminationGracePeriodSeconds": 20,
+            "volumes": [
+              {
+                "name": "management",
+                "secret": {
+                  "defaultMode": 288,
+                  "secretName": "neon-management-auth"
+                }
+              },
+              {
+                "name": "bootstrap-ready",
+                "secret": {
+                  "items": [
+                    {
+                      "key": "identity.json",
+                      "path": "identity.json"
+                    }
+                  ],
+                  "secretName": "neon-bootstrap-state"
+                }
+              },
+              {
+                "name": "tls",
+                "secret": {
+                  "defaultMode": 288,
+                  "secretName": "neon-controller-tls"
+                }
+              },
+              {
+                "name": "trust",
+                "secret": {
+                  "defaultMode": 292,
+                  "secretName": "neon-service-ca"
+                }
+              },
+              {
+                "name": "auth",
+                "secret": {
+                  "defaultMode": 288,
+                  "secretName": "neon-controller-auth"
+                }
+              },
+              {
+                "emptyDir": {
+                  "sizeLimit": "64Mi"
+                },
+                "name": "tmp"
+              },
+              {
+                "configMap": {
+                  "name": "neon-cluster"
+                },
+                "name": "config"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "storage-broker",
+        "namespace": "neon"
+      },
+      "spec": {
+        "selector": {
+          "matchLabels": {
+            "app": "storage-broker"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "storage-broker",
+              "neon.klustr.io/storage-fleet": "storage"
+            }
+          },
+          "spec": {
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "image": "ghcr.io/klustr-io/neon-storage-broker@sha256:d2ee7433b77031d3bbaad7a4a6f61d3671307661d09de65e469296b77134dce6",
+                "name": "broker",
+                "ports": [
+                  {
+                    "containerPort": 50051
+                  }
+                ],
+                "resources": {
+                  "limits": {
+                    "cpu": "1",
+                    "memory": "256Mi"
+                  },
+                  "requests": {
+                    "cpu": "50m",
+                    "memory": "64Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true
+                }
+              }
+            ],
+            "nodeSelector": {
+              "kubernetes.io/arch": "amd64",
+              "kubernetes.io/os": "linux"
+            },
+            "securityContext": {
+              "fsGroup": 10001,
+              "runAsGroup": 10001,
+              "runAsNonRoot": true,
+              "runAsUser": 10001,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "storage-controller",
+        "namespace": "neon"
+      },
+      "spec": {
+        "selector": {
+          "matchLabels": {
+            "app": "storage-controller"
+          }
+        },
+        "strategy": {
+          "type": "Recreate"
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "storage-controller",
+              "neon.klustr.io/storage-fleet": "storage"
+            }
+          },
+          "spec": {
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "command": [
+                  "/bin/sh",
+                  "-ec",
+                  "exec /usr/local/bin/storage_controller --listen 0.0.0.0:1234 --initial-split-threshold 17179869184 --initial-split-shards 2 --split-threshold 1099511627776 --max-split-shards 16 --control-plane-url http://neon-controller:9090 --control-plane-jwt-token \"$(cat /run/neon/controller-token)\" --address-for-peers http://storage-controller:1234 --database-url \"postgresql://neon:$(cat /run/metadata/password)@metadata:5432/postgres\" --public-key=\"$(cat /run/neon/storage.pub)\" --jwt-token \"$(cat /run/neon/pageserver.jwt)\" --safekeeper-jwt-token \"$(cat /run/neon/safekeeper.jwt)\" --peer-jwt-token \"$(cat /run/neon/peer.jwt)\""
+                ],
+                "image": "ghcr.io/klustr-io/neon-storage-controller@sha256:0cbbb4f17394e035c5b8838346d1655dd4f99068e535dd78bed4738a814479e7",
+                "name": "controller",
+                "ports": [
+                  {
+                    "containerPort": 1234
+                  }
+                ],
+                "readinessProbe": {
+                  "tcpSocket": {
+                    "port": 1234
+                  }
+                },
+                "resources": {
+                  "limits": {
+                    "cpu": "1",
+                    "memory": "512Mi"
+                  },
+                  "requests": {
+                    "cpu": "100m",
+                    "memory": "128Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true
+                },
+                "volumeMounts": [
+                  {
+                    "mountPath": "/run/neon",
+                    "name": "storage-config",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/run/metadata",
+                    "name": "metadata",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/tmp",
+                    "name": "tmp"
+                  }
+                ]
+              }
+            ],
+            "nodeSelector": {
+              "kubernetes.io/arch": "amd64",
+              "kubernetes.io/os": "linux"
+            },
+            "securityContext": {
+              "fsGroup": 10001,
+              "runAsGroup": 10001,
+              "runAsNonRoot": true,
+              "runAsUser": 10001,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "volumes": [
+              {
+                "name": "storage-config",
+                "secret": {
+                  "defaultMode": 288,
+                  "secretName": "neon-storage-controller-config"
+                }
+              },
+              {
+                "name": "metadata",
+                "secret": {
+                  "defaultMode": 288,
+                  "secretName": "neon-metadata"
+                }
+              },
+              {
+                "emptyDir": {
+                  "sizeLimit": "64Mi"
+                },
+                "name": "tmp"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "StatefulSet",
+      "metadata": {
+        "name": "metadata",
+        "namespace": "neon"
+      },
+      "spec": {
+        "selector": {
+          "matchLabels": {
+            "app": "metadata"
+          }
+        },
+        "serviceName": "metadata",
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "metadata",
+              "neon.klustr.io/storage-fleet": "storage"
+            }
+          },
+          "spec": {
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "command": [
+                  "/bin/sh",
+                  "-ec",
+                  "if [ ! -f /var/lib/neon/metadata/PG_VERSION ]; then /opt/postgres/v18/bin/initdb -D /var/lib/neon/metadata -U neon --pwfile=/run/metadata/password --auth-host=scram-sha-256; fi; printf \"local all all trust\n host postgres neon 0.0.0.0/0 scram-sha-256\n host postgres neon ::/0 scram-sha-256\n\" > /var/lib/neon/metadata/pg_hba.conf; exec /opt/postgres/v18/bin/postgres -D /var/lib/neon/metadata -c listen_addresses=* -p 5432"
+                ],
+                "image": "ghcr.io/klustr-io/neon-compute@sha256:f84df9577c542dbf3be8a789d301716f77c7d6ac5c79bfd519818834b3427aef",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "metadata",
+                "ports": [
+                  {
+                    "containerPort": 5432,
+                    "name": "postgres"
+                  }
+                ],
+                "readinessProbe": {
+                  "exec": {
+                    "command": [
+                      "/opt/postgres/v18/bin/pg_isready",
+                      "-U",
+                      "neon",
+                      "-d",
+                      "postgres"
+                    ]
+                  }
+                },
+                "resources": {
+                  "limits": {
+                    "cpu": "2",
+                    "memory": "2Gi"
+                  },
+                  "requests": {
+                    "cpu": "250m",
+                    "memory": "256Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true
+                },
+                "volumeMounts": [
+                  {
+                    "mountPath": "/var/lib/neon",
+                    "name": "data"
+                  },
+                  {
+                    "mountPath": "/run/metadata",
+                    "name": "metadata",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/tmp",
+                    "name": "tmp"
+                  }
+                ]
+              }
+            ],
+            "nodeSelector": {
+              "kubernetes.io/arch": "amd64",
+              "kubernetes.io/os": "linux"
+            },
+            "securityContext": {
+              "fsGroup": 10001,
+              "runAsGroup": 10001,
+              "runAsNonRoot": true,
+              "runAsUser": 10001,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "terminationGracePeriodSeconds": 120,
+            "volumes": [
+              {
+                "emptyDir": {
+                  "sizeLimit": "256Mi"
+                },
+                "name": "tmp"
+              },
+              {
+                "name": "metadata",
+                "secret": {
+                  "defaultMode": 288,
+                  "secretName": "neon-metadata"
+                }
+              }
+            ]
+          }
+        },
+        "volumeClaimTemplates": [
+          {
+            "metadata": {
+              "name": "data"
+            },
+            "spec": {
+              "accessModes": [
+                "ReadWriteOnce"
+              ],
+              "resources": {
+                "requests": {
+                  "storage": "10Gi"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "StatefulSet",
+      "metadata": {
+        "name": "pageserver",
+        "namespace": "neon"
+      },
+      "spec": {
+        "selector": {
+          "matchLabels": {
+            "app": "pageserver"
+          }
+        },
+        "serviceName": "pageserver",
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "pageserver",
+              "neon.klustr.io/storage-fleet": "storage"
+            }
+          },
+          "spec": {
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "command": [
+                  "/bin/sh",
+                  "-ec",
+                  "cat /run/neon/pageserver.toml > /var/lib/neon/pageserver.toml; printf \"id=1\\n\" > /var/lib/neon/identity.toml; export NEON_AUTH_TOKEN=\"$(cat /run/neon/safekeeper.jwt)\"; exec /usr/local/bin/pageserver -D /var/lib/neon"
+                ],
+                "env": [
+                  {
+                    "name": "AWS_EC2_METADATA_DISABLED",
+                    "value": "true"
+                  }
+                ],
+                "envFrom": [
+                  {
+                    "secretRef": {
+                      "name": "neon-s3"
+                    }
+                  }
+                ],
+                "image": "ghcr.io/klustr-io/neon-pageserver@sha256:b3a597ad16b77c8a611f8c18481a7b87bb258d919d4d458ad36c5f465373ae28",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "pageserver",
+                "ports": [
+                  {
+                    "containerPort": 6400,
+                    "name": "postgres"
+                  },
+                  {
+                    "containerPort": 9898,
+                    "name": "http"
+                  }
+                ],
+                "readinessProbe": {
+                  "periodSeconds": 3,
+                  "tcpSocket": {
+                    "port": 6400
+                  }
+                },
+                "resources": {
+                  "limits": {
+                    "cpu": "2",
+                    "memory": "2Gi"
+                  },
+                  "requests": {
+                    "cpu": "250m",
+                    "memory": "512Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true
+                },
+                "volumeMounts": [
+                  {
+                    "mountPath": "/var/lib/neon",
+                    "name": "data"
+                  },
+                  {
+                    "mountPath": "/run/neon",
+                    "name": "storage-config",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/tmp",
+                    "name": "tmp"
+                  }
+                ]
+              }
+            ],
+            "nodeSelector": {
+              "kubernetes.io/arch": "amd64",
+              "kubernetes.io/os": "linux"
+            },
+            "securityContext": {
+              "fsGroup": 10001,
+              "runAsGroup": 10001,
+              "runAsNonRoot": true,
+              "runAsUser": 10001,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "terminationGracePeriodSeconds": 120,
+            "volumes": [
+              {
+                "emptyDir": {
+                  "sizeLimit": "256Mi"
+                },
+                "name": "tmp"
+              },
+              {
+                "name": "storage-config",
+                "secret": {
+                  "defaultMode": 288,
+                  "secretName": "neon-pageserver-config"
+                }
+              }
+            ]
+          }
+        },
+        "volumeClaimTemplates": [
+          {
+            "metadata": {
+              "name": "data"
+            },
+            "spec": {
+              "accessModes": [
+                "ReadWriteOnce"
+              ],
+              "resources": {
+                "requests": {
+                  "storage": "10Gi"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "StatefulSet",
+      "metadata": {
+        "name": "pageserver-2",
+        "namespace": "neon"
+      },
+      "spec": {
+        "selector": {
+          "matchLabels": {
+            "app": "pageserver-2"
+          }
+        },
+        "serviceName": "pageserver-2",
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "pageserver-2",
+              "neon.klustr.io/storage-fleet": "storage"
+            }
+          },
+          "spec": {
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "command": [
+                  "/bin/sh",
+                  "-ec",
+                  "cat /run/neon/pageserver.toml > /var/lib/neon/pageserver.toml; printf \"id=2\\n\" > /var/lib/neon/identity.toml; export NEON_AUTH_TOKEN=\"$(cat /run/neon/safekeeper.jwt)\"; exec /usr/local/bin/pageserver -D /var/lib/neon"
+                ],
+                "env": [
+                  {
+                    "name": "AWS_EC2_METADATA_DISABLED",
+                    "value": "true"
+                  }
+                ],
+                "envFrom": [
+                  {
+                    "secretRef": {
+                      "name": "neon-s3"
+                    }
+                  }
+                ],
+                "image": "ghcr.io/klustr-io/neon-pageserver@sha256:b3a597ad16b77c8a611f8c18481a7b87bb258d919d4d458ad36c5f465373ae28",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "pageserver-2",
+                "ports": [
+                  {
+                    "containerPort": 6400,
+                    "name": "postgres"
+                  },
+                  {
+                    "containerPort": 9898,
+                    "name": "http"
+                  }
+                ],
+                "readinessProbe": {
+                  "periodSeconds": 3,
+                  "tcpSocket": {
+                    "port": 6400
+                  }
+                },
+                "resources": {
+                  "limits": {
+                    "cpu": "2",
+                    "memory": "2Gi"
+                  },
+                  "requests": {
+                    "cpu": "250m",
+                    "memory": "512Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true
+                },
+                "volumeMounts": [
+                  {
+                    "mountPath": "/var/lib/neon",
+                    "name": "data"
+                  },
+                  {
+                    "mountPath": "/run/neon",
+                    "name": "storage-config",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/tmp",
+                    "name": "tmp"
+                  }
+                ]
+              }
+            ],
+            "nodeSelector": {
+              "kubernetes.io/arch": "amd64",
+              "kubernetes.io/os": "linux"
+            },
+            "securityContext": {
+              "fsGroup": 10001,
+              "runAsGroup": 10001,
+              "runAsNonRoot": true,
+              "runAsUser": 10001,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "terminationGracePeriodSeconds": 120,
+            "volumes": [
+              {
+                "emptyDir": {
+                  "sizeLimit": "256Mi"
+                },
+                "name": "tmp"
+              },
+              {
+                "name": "storage-config",
+                "secret": {
+                  "defaultMode": 288,
+                  "secretName": "neon-pageserver-config"
+                }
+              }
+            ]
+          }
+        },
+        "volumeClaimTemplates": [
+          {
+            "metadata": {
+              "name": "data"
+            },
+            "spec": {
+              "accessModes": [
+                "ReadWriteOnce"
+              ],
+              "resources": {
+                "requests": {
+                  "storage": "10Gi"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "StatefulSet",
+      "metadata": {
+        "name": "safekeeper-1",
+        "namespace": "neon"
+      },
+      "spec": {
+        "selector": {
+          "matchLabels": {
+            "app": "safekeeper-1"
+          }
+        },
+        "serviceName": "safekeeper-1",
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "safekeeper-1",
+              "neon.klustr.io/storage-fleet": "storage"
+            }
+          },
+          "spec": {
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "command": [
+                  "/bin/sh",
+                  "-ec",
+                  "exec /usr/local/bin/safekeeper -D /var/lib/neon --id 1 --listen-pg 0.0.0.0:5454 --listen-http 0.0.0.0:7676 --advertise-pg safekeeper-1:5454 --broker-endpoint http://storage-broker:50051 --pg-auth-public-key-path /run/neon/storage.pub --http-auth-public-key-path /run/neon/storage.pub --auth-token-path /run/neon/safekeeper.jwt --remote-storage \"$(cat /run/neon/remote.toml)\""
+                ],
+                "env": [
+                  {
+                    "name": "AWS_EC2_METADATA_DISABLED",
+                    "value": "true"
+                  }
+                ],
+                "envFrom": [
+                  {
+                    "secretRef": {
+                      "name": "neon-s3"
+                    }
+                  }
+                ],
+                "image": "ghcr.io/klustr-io/neon-safekeeper@sha256:0a80018301b8b3d1386e400cb82495f0659bfaaf5b1dc2d75ed3d1fe81dfb0bc",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "safekeeper-1",
+                "ports": [
+                  {
+                    "containerPort": 5454,
+                    "name": "postgres"
+                  },
+                  {
+                    "containerPort": 7676,
+                    "name": "http"
+                  }
+                ],
+                "readinessProbe": {
+                  "periodSeconds": 3,
+                  "tcpSocket": {
+                    "port": 5454
+                  }
+                },
+                "resources": {
+                  "limits": {
+                    "cpu": "2",
+                    "memory": "2Gi"
+                  },
+                  "requests": {
+                    "cpu": "250m",
+                    "memory": "512Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true
+                },
+                "volumeMounts": [
+                  {
+                    "mountPath": "/var/lib/neon",
+                    "name": "data"
+                  },
+                  {
+                    "mountPath": "/run/neon",
+                    "name": "storage-config",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/tmp",
+                    "name": "tmp"
+                  }
+                ]
+              }
+            ],
+            "nodeSelector": {
+              "kubernetes.io/arch": "amd64",
+              "kubernetes.io/os": "linux"
+            },
+            "securityContext": {
+              "fsGroup": 10001,
+              "runAsGroup": 10001,
+              "runAsNonRoot": true,
+              "runAsUser": 10001,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "terminationGracePeriodSeconds": 120,
+            "volumes": [
+              {
+                "emptyDir": {
+                  "sizeLimit": "256Mi"
+                },
+                "name": "tmp"
+              },
+              {
+                "name": "storage-config",
+                "secret": {
+                  "defaultMode": 288,
+                  "secretName": "neon-safekeeper-config"
+                }
+              }
+            ]
+          }
+        },
+        "volumeClaimTemplates": [
+          {
+            "metadata": {
+              "name": "data"
+            },
+            "spec": {
+              "accessModes": [
+                "ReadWriteOnce"
+              ],
+              "resources": {
+                "requests": {
+                  "storage": "10Gi"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "StatefulSet",
+      "metadata": {
+        "name": "safekeeper-2",
+        "namespace": "neon"
+      },
+      "spec": {
+        "selector": {
+          "matchLabels": {
+            "app": "safekeeper-2"
+          }
+        },
+        "serviceName": "safekeeper-2",
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "safekeeper-2",
+              "neon.klustr.io/storage-fleet": "storage"
+            }
+          },
+          "spec": {
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "command": [
+                  "/bin/sh",
+                  "-ec",
+                  "exec /usr/local/bin/safekeeper -D /var/lib/neon --id 2 --listen-pg 0.0.0.0:5454 --listen-http 0.0.0.0:7676 --advertise-pg safekeeper-2:5454 --broker-endpoint http://storage-broker:50051 --pg-auth-public-key-path /run/neon/storage.pub --http-auth-public-key-path /run/neon/storage.pub --auth-token-path /run/neon/safekeeper.jwt --remote-storage \"$(cat /run/neon/remote.toml)\""
+                ],
+                "env": [
+                  {
+                    "name": "AWS_EC2_METADATA_DISABLED",
+                    "value": "true"
+                  }
+                ],
+                "envFrom": [
+                  {
+                    "secretRef": {
+                      "name": "neon-s3"
+                    }
+                  }
+                ],
+                "image": "ghcr.io/klustr-io/neon-safekeeper@sha256:0a80018301b8b3d1386e400cb82495f0659bfaaf5b1dc2d75ed3d1fe81dfb0bc",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "safekeeper-2",
+                "ports": [
+                  {
+                    "containerPort": 5454,
+                    "name": "postgres"
+                  },
+                  {
+                    "containerPort": 7676,
+                    "name": "http"
+                  }
+                ],
+                "readinessProbe": {
+                  "periodSeconds": 3,
+                  "tcpSocket": {
+                    "port": 5454
+                  }
+                },
+                "resources": {
+                  "limits": {
+                    "cpu": "2",
+                    "memory": "2Gi"
+                  },
+                  "requests": {
+                    "cpu": "250m",
+                    "memory": "512Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true
+                },
+                "volumeMounts": [
+                  {
+                    "mountPath": "/var/lib/neon",
+                    "name": "data"
+                  },
+                  {
+                    "mountPath": "/run/neon",
+                    "name": "storage-config",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/tmp",
+                    "name": "tmp"
+                  }
+                ]
+              }
+            ],
+            "nodeSelector": {
+              "kubernetes.io/arch": "amd64",
+              "kubernetes.io/os": "linux"
+            },
+            "securityContext": {
+              "fsGroup": 10001,
+              "runAsGroup": 10001,
+              "runAsNonRoot": true,
+              "runAsUser": 10001,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "terminationGracePeriodSeconds": 120,
+            "volumes": [
+              {
+                "emptyDir": {
+                  "sizeLimit": "256Mi"
+                },
+                "name": "tmp"
+              },
+              {
+                "name": "storage-config",
+                "secret": {
+                  "defaultMode": 288,
+                  "secretName": "neon-safekeeper-config"
+                }
+              }
+            ]
+          }
+        },
+        "volumeClaimTemplates": [
+          {
+            "metadata": {
+              "name": "data"
+            },
+            "spec": {
+              "accessModes": [
+                "ReadWriteOnce"
+              ],
+              "resources": {
+                "requests": {
+                  "storage": "10Gi"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "StatefulSet",
+      "metadata": {
+        "name": "safekeeper-3",
+        "namespace": "neon"
+      },
+      "spec": {
+        "selector": {
+          "matchLabels": {
+            "app": "safekeeper-3"
+          }
+        },
+        "serviceName": "safekeeper-3",
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "safekeeper-3",
+              "neon.klustr.io/storage-fleet": "storage"
+            }
+          },
+          "spec": {
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "command": [
+                  "/bin/sh",
+                  "-ec",
+                  "exec /usr/local/bin/safekeeper -D /var/lib/neon --id 3 --listen-pg 0.0.0.0:5454 --listen-http 0.0.0.0:7676 --advertise-pg safekeeper-3:5454 --broker-endpoint http://storage-broker:50051 --pg-auth-public-key-path /run/neon/storage.pub --http-auth-public-key-path /run/neon/storage.pub --auth-token-path /run/neon/safekeeper.jwt --remote-storage \"$(cat /run/neon/remote.toml)\""
+                ],
+                "env": [
+                  {
+                    "name": "AWS_EC2_METADATA_DISABLED",
+                    "value": "true"
+                  }
+                ],
+                "envFrom": [
+                  {
+                    "secretRef": {
+                      "name": "neon-s3"
+                    }
+                  }
+                ],
+                "image": "ghcr.io/klustr-io/neon-safekeeper@sha256:0a80018301b8b3d1386e400cb82495f0659bfaaf5b1dc2d75ed3d1fe81dfb0bc",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "safekeeper-3",
+                "ports": [
+                  {
+                    "containerPort": 5454,
+                    "name": "postgres"
+                  },
+                  {
+                    "containerPort": 7676,
+                    "name": "http"
+                  }
+                ],
+                "readinessProbe": {
+                  "periodSeconds": 3,
+                  "tcpSocket": {
+                    "port": 5454
+                  }
+                },
+                "resources": {
+                  "limits": {
+                    "cpu": "2",
+                    "memory": "2Gi"
+                  },
+                  "requests": {
+                    "cpu": "250m",
+                    "memory": "512Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true
+                },
+                "volumeMounts": [
+                  {
+                    "mountPath": "/var/lib/neon",
+                    "name": "data"
+                  },
+                  {
+                    "mountPath": "/run/neon",
+                    "name": "storage-config",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/tmp",
+                    "name": "tmp"
+                  }
+                ]
+              }
+            ],
+            "nodeSelector": {
+              "kubernetes.io/arch": "amd64",
+              "kubernetes.io/os": "linux"
+            },
+            "securityContext": {
+              "fsGroup": 10001,
+              "runAsGroup": 10001,
+              "runAsNonRoot": true,
+              "runAsUser": 10001,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "terminationGracePeriodSeconds": 120,
+            "volumes": [
+              {
+                "emptyDir": {
+                  "sizeLimit": "256Mi"
+                },
+                "name": "tmp"
+              },
+              {
+                "name": "storage-config",
+                "secret": {
+                  "defaultMode": 288,
+                  "secretName": "neon-safekeeper-config"
+                }
+              }
+            ]
+          }
+        },
+        "volumeClaimTemplates": [
+          {
+            "metadata": {
+              "name": "data"
+            },
+            "spec": {
+              "accessModes": [
+                "ReadWriteOnce"
+              ],
+              "resources": {
+                "requests": {
+                  "storage": "10Gi"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "batch/v1",
+      "kind": "Job",
+      "metadata": {
+        "name": "neon-init",
+        "namespace": "neon"
+      },
+      "spec": {
+        "activeDeadlineSeconds": 900,
+        "backoffLimit": 8,
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "neon-bootstrap"
+            }
+          },
+          "spec": {
+            "containers": [
+              {
+                "command": [
+                  "/usr/local/bin/node",
+                  "/app/src/composition/TenantProvisioningInit.mjs",
+                  "init"
+                ],
+                "env": [
+                  {
+                    "name": "NEON_INITIALIZE_ONLY",
+                    "value": "true"
+                  },
+                  {
+                    "name": "NEON_PLATFORM",
+                    "value": "kubernetes"
+                  },
+                  {
+                    "name": "POD_NAMESPACE",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "fieldPath": "metadata.namespace"
+                      }
+                    }
+                  }
+                ],
+                "image": "ghcr.io/klustr-io/neon-tenant-controller@sha256:98fd4dde0fff823387022a81d58d593d67df9a4c463649a4cda9d8371afb5fdb",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "init",
+                "resources": {
+                  "limits": {
+                    "cpu": "1",
+                    "memory": "512Mi"
+                  },
+                  "requests": {
+                    "cpu": "100m",
+                    "memory": "128Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true
+                },
+                "volumeMounts": [
+                  {
+                    "mountPath": "/etc/neon",
+                    "name": "config",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/state",
+                    "name": "state"
+                  },
+                  {
+                    "mountPath": "/tmp",
+                    "name": "tmp"
+                  }
+                ]
+              }
+            ],
+            "nodeSelector": {
+              "kubernetes.io/arch": "amd64",
+              "kubernetes.io/os": "linux"
+            },
+            "restartPolicy": "OnFailure",
+            "securityContext": {
+              "fsGroup": 10001,
+              "runAsGroup": 10001,
+              "runAsNonRoot": true,
+              "runAsUser": 10001,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "serviceAccountName": "neon-bootstrap",
+            "volumes": [
+              {
+                "configMap": {
+                  "name": "neon-cluster"
+                },
+                "name": "config"
+              },
+              {
+                "emptyDir": {},
+                "name": "state"
+              },
+              {
+                "emptyDir": {},
+                "name": "tmp"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "keda.sh/v1alpha1",
+      "kind": "ScaledObject",
+      "metadata": {
+        "name": "neon-storage",
+        "namespace": "neon"
+      },
+      "spec": {
+        "cooldownPeriod": 30,
+        "maxReplicaCount": 1,
+        "minReplicaCount": 0,
+        "pollingInterval": 5,
+        "scaleTargetRef": {
+          "apiVersion": "neon.klustr.io/v1alpha1",
+          "kind": "NeonStorageFleet",
+          "name": "storage"
+        },
+        "triggers": [
+          {
+            "authenticationRef": {
+              "name": "neon-keda-tls"
+            },
+            "metadata": {
+              "enableTLS": "true",
+              "fleet": "true",
+              "scalerAddress": "neon-controller.neon.svc.cluster.local:9091"
+            },
+            "type": "external-push"
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "keda.sh/v1alpha1",
+      "kind": "TriggerAuthentication",
+      "metadata": {
+        "name": "neon-keda-tls",
+        "namespace": "neon"
+      },
+      "spec": {
+        "secretTargetRef": [
+          {
+            "key": "ca.crt",
+            "name": "neon-keda-client-tls",
+            "parameter": "caCert"
+          },
+          {
+            "key": "tls.crt",
+            "name": "neon-keda-client-tls",
+            "parameter": "tlsClientCert"
+          },
+          {
+            "key": "tls.key",
+            "name": "neon-keda-client-tls",
+            "parameter": "tlsClientKey"
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "neon.klustr.io/v1alpha1",
+      "kind": "NeonStorageFleet",
+      "metadata": {
+        "name": "storage",
+        "namespace": "neon"
+      },
+      "spec": {}
+    },
+    {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "NetworkPolicy",
+      "metadata": {
+        "name": "neon-broker-ingress",
+        "namespace": "neon"
+      },
+      "spec": {
+        "ingress": [
+          {
+            "from": [
+              {
+                "podSelector": {
+                  "matchExpressions": [
+                    {
+                      "key": "app",
+                      "operator": "In",
+                      "values": [
+                        "pageserver",
+                        "pageserver-2",
+                        "safekeeper-1",
+                        "safekeeper-2",
+                        "safekeeper-3"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ],
+            "ports": [
+              {
+                "port": 50051,
+                "protocol": "TCP"
+              }
+            ]
+          }
+        ],
+        "podSelector": {
+          "matchExpressions": [
+            {
+              "key": "app",
+              "operator": "In",
+              "values": [
+                "storage-broker"
+              ]
+            }
+          ]
+        },
+        "policyTypes": [
+          "Ingress"
+        ]
+      }
+    },
+    {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "NetworkPolicy",
+      "metadata": {
+        "name": "neon-compute-ingress",
+        "namespace": "neon"
+      },
+      "spec": {
+        "ingress": [
+          {
+            "from": [
+              {
+                "podSelector": {
+                  "matchLabels": {
+                    "app.kubernetes.io/name": "neon-proxy"
+                  }
+                }
+              },
+              {
+                "podSelector": {
+                  "matchLabels": {
+                    "app.kubernetes.io/name": "neon-tenant-controller"
+                  }
+                }
+              }
+            ],
+            "ports": [
+              {
+                "port": 5432,
+                "protocol": "TCP"
+              }
+            ]
+          }
+        ],
+        "podSelector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "neon-compute"
+          }
+        },
+        "policyTypes": [
+          "Ingress"
+        ]
+      }
+    },
+    {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "NetworkPolicy",
+      "metadata": {
+        "name": "neon-controller-ingress",
+        "namespace": "neon"
+      },
+      "spec": {
+        "ingress": [
+          {
+            "from": [
+              {
+                "podSelector": {
+                  "matchLabels": {
+                    "app.kubernetes.io/name": "neon-proxy"
+                  }
+                }
+              },
+              {
+                "podSelector": {
+                  "matchLabels": {
+                    "app.kubernetes.io/name": "neon-compute"
+                  }
+                }
+              }
+            ],
+            "ports": [
+              {
+                "port": 8080,
+                "protocol": "TCP"
+              }
+            ]
+          },
+          {
+            "from": [
+              {
+                "podSelector": {
+                  "matchLabels": {
+                    "app": "storage-controller"
+                  }
+                }
+              }
+            ],
+            "ports": [
+              {
+                "port": 9090,
+                "protocol": "TCP"
+              }
+            ]
+          }
+        ],
+        "podSelector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "neon-tenant-controller"
+          }
+        },
+        "policyTypes": [
+          "Ingress"
+        ]
+      }
+    },
+    {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "NetworkPolicy",
+      "metadata": {
+        "name": "neon-database-control-ingress",
+        "namespace": "neon"
+      },
+      "spec": {
+        "ingress": [
+          {
+            "from": [
+              {
+                "namespaceSelector": {
+                  "matchLabels": {
+                    "kubernetes.io/metadata.name": "keda"
+                  }
+                }
+              }
+            ],
+            "ports": [
+              {
+                "port": 9091,
+                "protocol": "TCP"
+              }
+            ]
+          },
+          {
+            "from": [
+              {
+                "podSelector": {
+                  "matchLabels": {
+                    "neon.klustr.io/webhook-client": "true"
+                  }
+                }
+              }
+            ],
+            "ports": [
+              {
+                "port": 8080,
+                "protocol": "TCP"
+              }
+            ]
+          }
+        ],
+        "podSelector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "neon-tenant-controller"
+          }
+        },
+        "policyTypes": [
+          "Ingress"
+        ]
+      }
+    },
+    {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "NetworkPolicy",
+      "metadata": {
+        "name": "neon-metadata-ingress",
+        "namespace": "neon"
+      },
+      "spec": {
+        "ingress": [
+          {
+            "from": [
+              {
+                "podSelector": {
+                  "matchExpressions": [
+                    {
+                      "key": "app",
+                      "operator": "In",
+                      "values": [
+                        "storage-controller"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ],
+            "ports": [
+              {
+                "port": 5432,
+                "protocol": "TCP"
+              }
+            ]
+          }
+        ],
+        "podSelector": {
+          "matchExpressions": [
+            {
+              "key": "app",
+              "operator": "In",
+              "values": [
+                "metadata"
+              ]
+            }
+          ]
+        },
+        "policyTypes": [
+          "Ingress"
+        ]
+      }
+    },
+    {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "NetworkPolicy",
+      "metadata": {
+        "name": "neon-pageserver-ingress",
+        "namespace": "neon"
+      },
+      "spec": {
+        "ingress": [
+          {
+            "from": [
+              {
+                "podSelector": {
+                  "matchExpressions": [
+                    {
+                      "key": "app",
+                      "operator": "In",
+                      "values": [
+                        "storage-controller",
+                        "neon-bootstrap"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ],
+            "ports": [
+              {
+                "port": 9898,
+                "protocol": "TCP"
+              }
+            ]
+          },
+          {
+            "from": [
+              {
+                "podSelector": {
+                  "matchLabels": {
+                    "app.kubernetes.io/name": "neon-compute"
+                  }
+                }
+              }
+            ],
+            "ports": [
+              {
+                "port": 6400,
+                "protocol": "TCP"
+              }
+            ]
+          }
+        ],
+        "podSelector": {
+          "matchExpressions": [
+            {
+              "key": "app",
+              "operator": "In",
+              "values": [
+                "pageserver",
+                "pageserver-2"
+              ]
+            }
+          ]
+        },
+        "policyTypes": [
+          "Ingress"
+        ]
+      }
+    },
+    {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "NetworkPolicy",
+      "metadata": {
+        "name": "neon-proxy-ingress",
+        "namespace": "neon"
+      },
+      "spec": {
+        "ingress": [
+          {
+            "ports": [
+              {
+                "port": 5432,
+                "protocol": "TCP"
+              }
+            ]
+          }
+        ],
+        "podSelector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "neon-proxy"
+          }
+        },
+        "policyTypes": [
+          "Ingress"
+        ]
+      }
+    },
+    {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "NetworkPolicy",
+      "metadata": {
+        "name": "neon-safekeeper-ingress",
+        "namespace": "neon"
+      },
+      "spec": {
+        "ingress": [
+          {
+            "from": [
+              {
+                "podSelector": {
+                  "matchExpressions": [
+                    {
+                      "key": "app",
+                      "operator": "In",
+                      "values": [
+                        "storage-controller",
+                        "neon-bootstrap",
+                        "safekeeper-1",
+                        "safekeeper-2",
+                        "safekeeper-3"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ],
+            "ports": [
+              {
+                "port": 7676,
+                "protocol": "TCP"
+              }
+            ]
+          },
+          {
+            "from": [
+              {
+                "podSelector": {
+                  "matchExpressions": [
+                    {
+                      "key": "app",
+                      "operator": "In",
+                      "values": [
+                        "pageserver",
+                        "pageserver-2",
+                        "safekeeper-1",
+                        "safekeeper-2",
+                        "safekeeper-3"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "podSelector": {
+                  "matchLabels": {
+                    "app.kubernetes.io/name": "neon-compute"
+                  }
+                }
+              }
+            ],
+            "ports": [
+              {
+                "port": 5454,
+                "protocol": "TCP"
+              }
+            ]
+          }
+        ],
+        "podSelector": {
+          "matchExpressions": [
+            {
+              "key": "app",
+              "operator": "In",
+              "values": [
+                "safekeeper-1",
+                "safekeeper-2",
+                "safekeeper-3"
+              ]
+            }
+          ]
+        },
+        "policyTypes": [
+          "Ingress"
+        ]
+      }
+    },
+    {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "NetworkPolicy",
+      "metadata": {
+        "name": "neon-storage-controller-ingress",
+        "namespace": "neon"
+      },
+      "spec": {
+        "ingress": [
+          {
+            "from": [
+              {
+                "podSelector": {
+                  "matchExpressions": [
+                    {
+                      "key": "app",
+                      "operator": "In",
+                      "values": [
+                        "neon-bootstrap",
+                        "pageserver",
+                        "pageserver-2"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "podSelector": {
+                  "matchLabels": {
+                    "app.kubernetes.io/name": "neon-tenant-controller"
+                  }
+                }
+              }
+            ],
+            "ports": [
+              {
+                "port": 1234,
+                "protocol": "TCP"
+              }
+            ]
+          }
+        ],
+        "podSelector": {
+          "matchExpressions": [
+            {
+              "key": "app",
+              "operator": "In",
+              "values": [
+                "storage-controller"
+              ]
+            }
+          ]
+        },
+        "policyTypes": [
+          "Ingress"
+        ]
+      }
+    }
+  ]
+}

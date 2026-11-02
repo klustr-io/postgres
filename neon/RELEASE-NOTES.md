@@ -1,5 +1,36 @@
 # Enterprise fleet controller — source update
 
+- Database REST/YAML definitions share inherited fleet policy; backup scheduling
+  uses effective policy. Conflicting newcomers no longer stop the established
+  fleet, and retirement blocks new database activation and provisioning.
+- OIDC issuance and management outcomes preserve verified actor/SQL identity
+  correlation. DNS validation runs before storage identity is frozen, and compute
+  images come from one immutable packaged release authority.
+- Controller source separates application commands, domain policy, HTTP adapters,
+  infrastructure and composition. CI checks public contracts, dependency boundaries,
+  lint, behavior regressions and generated deployment freshness.
+- Whole-storage shutdown rejects inventories missing known managed tenants or
+  timelines instead of accepting an incomplete remote-durability proof.
+
+- Native database OAuth is an explicit `identity.database.oauth` fleet setting,
+  separate from management OIDC and the SCRAM credential-exchange API. The source
+  build installs the PG18 `klustr_oauth` validator and OAuth-capable libpq, and
+  carries `OAUTHBEARER` through the proxy to PostgreSQL over verified TLS.
+  Token checks enforce issuer, audience, expiry, scope, group/SQL-role and
+  tenant/project bindings. Endpoint-bound mTLS protects validator callbacks;
+  validator outages reject new native logins; introspection outages reject cache
+  misses and expired entries. Existing published RC5 digests need replacement
+  with matching rebuilt compute, proxy and controller images.
+- Management and database audiences can independently select JWT validation or
+  authenticated RFC 7662 introspection for opaque tokens. Introspection credentials
+  are projected from referenced Secrets, support Basic or form client authentication,
+  rotate without reusing old credential-bound entries. Active metadata is cached
+  for 30 seconds by default (`cacheSeconds: 0`–`60`), capped by token expiry;
+  concurrent checks coalesce. Invalid results and errors are not cached, and
+  expired entries fail closed on outages. Revocation affects new logins after
+  the configured cache interval; existing sessions are not terminated.
+- Proxy SNI routing honors certificate DNS SANs, including bootstrap certificates
+  with generic CNs. Enterprise auth-cache arguments include every required field.
 - A namespace-scoped `NeonFleet` operator provisions the checked-in architecture
   from YAML or Kubernetes APIs and exposes fleet updates through management APIs.
 - Customer OIDC validates management roles and database tenant/project bindings;

@@ -5,10 +5,64 @@ architecture. The Kubernetes KEDA path supports declarative database provisionin
 size/tier changes, demand webhooks, compute suspension and shared-storage suspension.
 Applications use normal PostgreSQL connections, SQL and JSONB.
 
-**These controller changes are newer than RC5.** Deployment YAML pins the public
-controller image built from commit `53ad969a448c0cc97565210e8c82f708b301dea0`;
-other runtime images are pinned to RC5 digests. This is an integration candidate,
-not a production HA certification. [Controller build and publication](https://github.com/klustr-io/postgres/actions/runs/41381516637).
+**Check release compatibility before installing.** Checked-in manifests still
+select earlier public images: RC5 runtime images and a later controller image.
+The native OAuth and introspection source update requires matching rebuilt
+compute, proxy and controller images; those capabilities are not added by changing
+YAML against the older pins. Local source/image checks are not production HA
+certification. See [release preparation](#release-and-image-selection) and
+[HA and replication](#ha-and-replication-options).
+
+## Deployment map
+
+| Goal | Start here |
+|---|---|
+| Customer-owned fleet with OIDC, native OAuth or opaque tokens | [Install a customer fleet](#install-a-customer-fleet), then the [OIDC option reference](#oidc-configuration-reference). |
+| Shared platform installation with KEDA and manually managed provider configuration | [Platform installation](#platform-installation-kubernetes-with-keda). |
+| Single-host integration with static PostgreSQL credentials | [Docker Compose](#docker-compose); enterprise OIDC and fleet APIs are Kubernetes capabilities. |
+| Automate provisioning and lifecycle changes | [Management API reference](#management-api-reference) and [Kubernetes resource inventory](#kubernetes-resource-inventory). |
+| Choose failure domains, metadata availability and durability | [HA and replication options](#ha-and-replication-options). |
+| Diagnose setup without creating benchmark data | [Small setup verification](#small-setup-verification-and-troubleshooting). |
+
+Shell examples use a POSIX shell. Supply your own Kubernetes context, namespace,
+DNS domain, registry digests, CSI class, S3 endpoint and identity provider. No
+cloud account, identity server or external metadata cluster is provisioned by
+the examples. Kubernetes API authentication is configured separately from Neon
+management/database authentication.
+
+### Release and image selection
+
+Use a coordinated source release for PostgreSQL 18, proxy, storage services and
+the tenant controller/operator. Public image names, source build commands and
+publication workflows are in the [README](README.md), [build guide](neon/README.md)
+and [release notes](neon/RELEASE-NOTES.md).
+
+For the native OAuth source update, install the controller's locked development
+dependencies, then build with the native authentication check enabled:
+
+```sh
+npm ci --prefix neon/controller/tenant-compute --ignore-scripts --no-audit --no-fund
+node neon/build.mjs --verify-native-oauth --version=YOUR_NEW_VERSION
+```
+
+The [GitHub source build workflow](.github/workflows/neon-pg18-candidate.yml)
+performs that check before publication. It exercises PG18 libpq, proxy/backend
+`OAUTHBEARER`, the installed validator, JWT and opaque introspection, and normal
+JSONB SQL. It does not certify zone-loss recovery or your identity provider.
+
+For a new release or registry mirror, maintainers must update the digest authority
+in [`render.mjs`](neon/packaging/deploy/render.mjs), render the deployment bundle,
+and build the controller with that bundle. The operator uses the controller
+image's packaged `fleet-stack.json` for runtime images; changing only an external
+Kustomize image entry does not replace the bundle inside the operator image.
+The packaged cluster compute image and metadata StatefulSet image must agree.
+
+Set the operator Deployment image and its `FLEET_CONTROLLER_IMAGE` environment
+value to the same qualified controller digest. A Kustomize `images` transform
+does not rewrite that environment value. `NeonFleet.spec` deliberately has no
+tenant-controlled image field. Keep the GitOps manifests, packaged runtime
+digests and release receipt together; do not invent digests or treat a
+controller-only update as a native proxy/compute upgrade.
 
 ## Idle boundary and cost
 
@@ -62,9 +116,9 @@ expensive wake; SNI alone is not authorization.
 
 The enterprise operator reconciles a namespaced `NeonFleet` into the storage,
 bootstrap, proxy, database controller and KEDA resources. It configures OIDC for
-management and a database credential-exchange API, with enforced placement across
-three physical availability zones. These controller features are newer than RC5;
-the checked-in deployment references use the controller build listed above.
+management, native database OAuth and a database credential-exchange API, with
+placement across three physical availability zones. Use the matching source
+release described above for native OAuth and introspection.
 `NeonStorageFleet` remains the separate drain-aware suspension target.
 
 Use one fleet in each fresh customer namespace. The fleet shape is:
@@ -74,8 +128,10 @@ apiVersion: neon.klustr.io/v1alpha1
 kind: NeonFleet
 metadata:
   name: enterprise-a
+  namespace: customer-a
 spec:
-  domain: klustr.io
+  domain: db.customer.example
+  clientCIDRs: [10.0.0.0/8]
   identity:
     issuer: https://identity.customer.example
     management:
@@ -102,6 +158,17 @@ spec:
     backup: {historySeconds: 604800, scheduleSeconds: 86400, retentionSeconds: 2592000}
 ```
 
+Database policy fields omitted from YAML or the API inherit the current fleet
+defaults, including size, tier, idle timeout and backup settings. Partial backup
+and suspend overrides inherit their omitted fields. Set `scheduleSeconds: 0`
+explicitly to disable scheduled backups. Existing stored values remain explicit
+overrides; changing fleet defaults does not overwrite them. Branches inherit
+their source database's storage history policy.
+
+Each namespace has one established fleet owner. Additional fleet resources are
+marked `Rejected` while the owner continues reconciling. Retiring a fleet blocks
+new database creation, resume and wake requests while preserving retained data.
+
 Management identity maps customer groups to fleet-scoped permissions, including
 separate authorization for database creation, backup access and destructive purge.
 Database identity maps approved users/workloads to explicitly granted PostgreSQL
@@ -109,11 +176,12 @@ roles and the correct tenant/project/branch. Database access must not imply flee
 administration. Clients obtain short-lived tokens from the customer's identity
 provider; no customer signing keys belong in the fleet. Browser login uses OIDC;
 API/database token acceptance needs the intended resource audience, issuer,
-signature, expiry and claim bindings. An OIDC ID token is not a generic API access
+expiry and claim bindings, verified by the selected JWT or introspection mode.
+An OIDC ID token is not a generic API access
 token. See [OIDC Core](https://openid.net/specs/openid-connect-core-1_0.html).
 
-Management APIs validate issuer, audience, signature, mandatory expiry and group
-bindings. Signing keys are cached for five minutes; an unknown key ID can refresh
+Management APIs validate issuer, audience, mandatory expiry and group bindings.
+JWT mode verifies signatures. Signing keys are cached for five minutes; an unknown key ID can refresh
 after a five-second minimum interval. HTTPS discovery verifies the issuer exactly.
 Set optional `jwksUrl` to a fixed HTTPS JWKS endpoint, or `caSecretRef` to a Secret
 containing `ca.crt` for a private issuer. Supported signing algorithms are RS256
@@ -149,22 +217,64 @@ available. Whole-fleet suspension trades warm failover/startup speed for idle co
 
 ### Install a customer fleet
 
-Install KEDA as described below. A cluster administrator installs the shared CRDs
-and the read-only node role once:
+Prepare AMD64 Linux workers, a network-policy-capable CNI, durable CSI storage
+with the required zone topology, an HTTPS S3-compatible bucket, and a reachable
+IdP. The fleet operator requires at least one Ready, untainted, schedulable node
+in each of its three zones. Storage placement uses the real
+`topology.kubernetes.io/zone` labels; labeling a single local worker three ways
+does not provide three failure domains. Cluster DNS currently assumes
+`cluster.local`, and the shared KEDA namespace defaults to `keda`.
+
+Use a namespace dedicated to this fleet. The enterprise operator and the
+standalone KEDA installer are alternative owners of the namespace's Neon stack;
+do not install both into it.
 
 ```sh
-kubectl apply -f neon/packaging/kubernetes/keda/database-crd.yaml -f neon/packaging/kubernetes/keda/backup-crd.yaml -f neon/packaging/kubernetes/keda/fleet-crd.yaml
-kubectl apply -f neon/packaging/kubernetes/enterprise/fleet-crd.yaml -f neon/packaging/kubernetes/enterprise/node-reader.yaml
+export NEON_KUBE_CONTEXT=YOUR_CONTEXT
+export NEON_NAMESPACE=customer-a
+export NEON_FLEET=enterprise-a
+kubectl --context "$NEON_KUBE_CONTEXT" get nodes -L topology.kubernetes.io/zone
+kubectl --context "$NEON_KUBE_CONTEXT" get storageclass
+```
+
+Install KEDA as described below. A cluster administrator installs the shared CRDs
+and the read-only node role once; these commands do not create customer databases:
+
+```sh
+kubectl --context "$NEON_KUBE_CONTEXT" apply -f neon/packaging/kubernetes/keda/database-crd.yaml -f neon/packaging/kubernetes/keda/backup-crd.yaml -f neon/packaging/kubernetes/keda/fleet-crd.yaml
+kubectl --context "$NEON_KUBE_CONTEXT" apply -f neon/packaging/kubernetes/enterprise/fleet-crd.yaml -f neon/packaging/kubernetes/enterprise/node-reader.yaml
+kubectl --context "$NEON_KUBE_CONTEXT" wait --for=condition=Established crd/neonfleets.neon.klustr.io crd/neondatabases.neon.klustr.io crd/neonbackups.neon.klustr.io crd/neonstoragefleets.neon.klustr.io --timeout=60s
+kubectl --context "$NEON_KUBE_CONTEXT" create namespace "$NEON_NAMESPACE"
 ```
 
 Copy [`enterprise/`](neon/packaging/kubernetes/enterprise) into the customer's
 GitOps repository. In its `kustomization.yaml`, set `namespace: enterprise-a` and
 `namePrefix: enterprise-a-`; use a unique prefix for each installation so the node
-reader binding is distinct. Create that namespace, then `kubectl apply -k` the
-copied directory. The operator has namespace-scoped provisioning authority and
+reader binding is distinct. Use the namespace created above, then `kubectl apply -k`
+the copied directory. The operator has namespace-scoped provisioning authority and
 cluster-wide read-only node access; its leadership lease is separate from the
 database controller. It refuses to adopt an existing deployment or migrate its
 storage identity implicitly.
+
+For example, the copied `customer-a/operator/kustomization.yaml` can contain:
+
+```yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: customer-a
+namePrefix: customer-a-
+resources:
+  - operator.yaml
+```
+
+Before applying it, select the release's operator image and matching
+`FLEET_CONTROLLER_IMAGE` in the copied `operator.yaml`. Review the rendered
+ServiceAccount/RoleBinding/ClusterRoleBinding subjects and namespace:
+
+```sh
+kubectl --context "$NEON_KUBE_CONTEXT" kustomize customer-a/operator
+kubectl --context "$NEON_KUBE_CONTEXT" apply -k customer-a/operator
+```
 
 Create the object-store Secret in the customer namespace from a protected file:
 
@@ -177,6 +287,26 @@ NEON_S3_BUCKET=...
 NEON_S3_PREFIX=customer-fleets
 ```
 
+Store that file outside source control with restricted filesystem permissions,
+then create the referenced Secret:
+
+```sh
+kubectl --context "$NEON_KUBE_CONTEXT" -n "$NEON_NAMESPACE" create secret generic customer-s3 --from-env-file=/secure/customer-s3.env
+```
+
+Create any private IdP CA and introspection Secrets **before** applying the fleet:
+
+```sh
+kubectl --context "$NEON_KUBE_CONTEXT" -n "$NEON_NAMESPACE" create secret generic customer-idp-ca --from-file=ca.crt=/secure/idp-ca.crt
+kubectl --context "$NEON_KUBE_CONTEXT" -n "$NEON_NAMESPACE" create secret generic neon-database-introspection --from-file=clientSecret=/secure/database-introspection-secret
+kubectl --context "$NEON_KUBE_CONTEXT" -n "$NEON_NAMESPACE" create secret generic neon-management-introspection --from-file=clientSecret=/secure/management-introspection-secret
+```
+
+Only create and reference the optional Secrets selected by your configuration.
+`identity.caSecretRef` applies to IdP HTTPS trust, not the S3 service, PostgreSQL
+client trust or external metadata TLS. The native runtimes must separately trust
+your S3 endpoint's certificate chain.
+
 An optional `AWS_SESSION_TOKEN` is supported. The actual prefix appends namespace
 and fleet UID to isolate deployments. Apply the edited
 [`examples/fleet.yaml`](neon/packaging/kubernetes/examples/fleet.yaml) into that
@@ -185,6 +315,41 @@ namespace. Three Ready, schedulable nodes carrying the actual configured
 PVCs use the selected CSI class; changing storage endpoints/classes or zone
 topology requires an explicit migration. Operator status reports Pending if a
 zone is missing or a resource belongs to another deployment.
+
+Save the fleet example above as `customer-fleet.yaml`, select your identity mode
+and native OAuth policy below, and apply it. Reconciliation is asynchronous:
+
+```sh
+kubectl --context "$NEON_KUBE_CONTEXT" -n "$NEON_NAMESPACE" apply -f customer-fleet.yaml
+kubectl --context "$NEON_KUBE_CONTEXT" -n "$NEON_NAMESPACE" get neonfleet "$NEON_FLEET" -o yaml
+kubectl --context "$NEON_KUBE_CONTEXT" -n "$NEON_NAMESPACE" get pods,pvc,scaledobject
+```
+
+Inspect `status.phase`, `observedGeneration`, `reason` and placement observations.
+`Provisioned` means resources were applied; it is not a healthy-database or HA
+certification. Storage workers may subsequently be asleep by policy. Create the
+first database with explicit OIDC resource bindings:
+
+```yaml
+apiVersion: neon.klustr.io/v1alpha1
+kind: NeonDatabase
+metadata:
+  name: events
+  namespace: customer-a
+spec:
+  database: app
+  identity: {tenant: acme, project: billing}
+  size: small
+  tier: standard
+  profile: durable
+  suspend: {mode: idle, idleSeconds: 300}
+```
+
+Apply that resource in the same namespace. Change `suspend` to `{mode: never}`
+for an always-on database. Tenant/project labels alone do not authorize tokens;
+the `spec.identity` binding above must match the verified token metadata. Configure
+DNS and the L4 proxy endpoint before connecting. The current database address is
+`ep-events.db.customer.example`, not `{project}.{tenant}.klustr.io`.
 
 Set optional `storage.metadataDatabaseSecretRef` to use an externally managed HA
 PostgreSQL database. That Secret's `url` must be a dedicated metadata DSN with
@@ -200,7 +365,230 @@ This configures Neon OIDC; it does not change the Kubernetes API server's own
 identity-provider configuration. Deleting a fleet requests suspension and retains
 data behind a finalizer. Do not remove that finalizer to bypass data review.
 
-### Connect with a customer OIDC identity
+### OIDC configuration reference
+
+These paths are relative to `NeonFleet.spec.identity`. The same identity object
+is persisted through the fleet management API. Unsupported fields are rejected;
+use these names rather than adding provider-specific runtime environment values.
+
+| Setting | Required/default | Purpose |
+|---|---|---|
+| `issuer` | Required HTTPS issuer identifier | Exact token issuer; use the issuer identifier, not its discovery-document URL. |
+| `jwksUrl` | Optional | Fixed HTTPS JWKS endpoint; otherwise discover it from the issuer. Used by JWT mode. |
+| `caSecretRef` | Optional | Same-namespace Secret containing `ca.crt` for private IdP trust. |
+| `algorithms` | `['RS256']` | JWT allowlist; supported values are `RS256`, `ES256`, `EdDSA`. |
+| `groupsClaim` | `groups` | Array-valued claim used for explicit group bindings. |
+| `tenantClaim`, `projectClaim` | `tenant`, `project` | Claims checked against each database's `spec.identity`. |
+| `management.audience` | Required | Resource audience for fleet/database management APIs. |
+| `management.roleBindings` | Required | `{group, role}` entries; configure a reachable `fleet-admin` principal during bootstrap. |
+| `management.allowStaticToken` | Disabled | Explicitly permit the separate management Secret as a shared break-glass principal. |
+| `database.audience` | Required; different from management | Resource audience for native login and credential exchange. |
+| `database.roleBindings` | Required | `{group, postgresRole}` entries; native OAuth requires a nonempty list. |
+| `database.requireTenantProjectBinding` | Must be `true` | Enforce database resource ownership on every token authorization. |
+| `database.managedRole` | `app_runtime` | Automatically managed restricted data role. |
+| `database.allowPasswordAuth` | Disabled | Permit other static PostgreSQL password roles through the proxy; native-mapped roles still require OAuth when enabled. |
+| `database.oauth.enabled` | Disabled when `oauth` is omitted | Explicit native PG18 OAuth opt-in. An `oauth` object requires a boolean `enabled`. |
+| `database.oauth.scope` | Required when enabled | Space-separated scopes, all of which must be present in the access token metadata. |
+| `database.oauth.scopeClaim` | `scope` | String-valued claim containing the granted scopes. |
+| `management.tokenValidation`, `database.tokenValidation` | `{mode: jwt}` | Independent token validation policies, detailed below. |
+
+Claim selectors name top-level claims, not JSONPath expressions. Configure IdP
+token mappers to emit groups as an array and native scopes as a space-separated
+string. Audience metadata may be a string or array containing the configured
+resource audience. A `client_id` is not a substitute for `aud`; an OIDC ID token
+is not a database access token.
+
+| `tokenValidation` setting | JWT mode | Introspection mode |
+|---|---|---|
+| `mode` | `jwt`; only this field is accepted | `introspection`; accepts opaque tokens or JWTs through the remote endpoint |
+| `endpoint` | Not applicable | Required fixed HTTPS URL; credentials, query and fragment are prohibited in this URL |
+| `clientId` | Not applicable | Required resource-server client identity |
+| `clientSecretRef` | Not applicable | Required same-namespace Secret name |
+| `clientSecretKey` | Not applicable | Secret data key; default `clientSecret` |
+| `authMethod` | Not applicable | `client_secret_basic` (default) or `client_secret_post` |
+| `cacheSeconds` | Not applicable | Successful-result cache lifetime: `30` by default, `60` for one minute, `0` to disable; integer range `0`–`60` |
+
+Register separate management and database audiences at your IdP. For native libpq
+device login, register the client and device authorization grant supported by
+your provider. For workload access, obtain access tokens through your provider's
+supported workload flow and supply them using the driver's OAuth facility.
+The introspection resource-server credential is separate from the application's
+token-acquisition client credential. Neon does not create these IdP registrations
+or issue customer access tokens.
+
+The IdP's signing keys stay at the IdP. JWT validation uses its public JWKS;
+introspection uses the referenced resource-server Secret. Both modes enforce
+expiry, subject, audience, groups and applicable database ownership/scopes.
+Introspection additionally requires `active: true`; [its claim requirements and
+failure behavior](#opaque-tokens-and-token-introspection) apply even when the
+submitted token happens to look like a JWT.
+
+### Native PostgreSQL 18 OAuth login
+
+Native OAuth and the credential-exchange API below are separate connection modes.
+The native mode uses PostgreSQL's `OAUTHBEARER` SASL mechanism and preserves the
+requested SQL role. It does not issue a replacement username or password.
+PostgreSQL requires an installed validator; this source build installs
+`klustr_oauth` and builds libpq with `--with-libcurl` for native OAuth clients.
+See [PostgreSQL OAuth authentication](https://www.postgresql.org/docs/18/auth-oauth.html).
+
+Enable it in `NeonFleet.spec.identity.database`, or the equivalent fleet API
+`spec.identity.database` settings. Keep the management audience separate:
+
+```yaml
+identity:
+  issuer: https://identity.customer.example
+  management:
+    audience: klustr-fleet-api
+    roleBindings:
+      - {group: database-admins, role: fleet-admin}
+  database:
+    audience: klustr-postgres
+    requireTenantProjectBinding: true
+    allowPasswordAuth: false
+    oauth:
+      enabled: true
+      scope: postgres:connect
+      scopeClaim: scope
+    roleBindings:
+      - {group: application-writers, postgresRole: app_runtime}
+```
+
+The database still needs its tenant/project `identity` binding. Configure the IdP
+to issue access tokens with the database audience, matching tenant/project,
+authorized groups and every required scope. `scope` is a space-separated list;
+`scopeClaim` selects a string-valued token claim and defaults to `scope`.
+Issuer/JWKS, signing algorithms and private issuer CA settings are shared with
+management authentication. JWT mode requires a valid signature and expiry;
+introspection mode requires an active response and the same authorization claims.
+Native authorization currently targets the primary SQL database selected by
+`NeonDatabase.spec.database`; creating additional SQL databases on that compute
+does not automatically add native OAuth authorization for them.
+
+The provider generates the HBA, selects the validator library and mounts an
+endpoint-specific client certificate. The proxy authorizes the token before
+waking storage/compute and prepares the restricted SQL login. It then forwards
+the same bearer token over verified TLS to PostgreSQL, which validates it again
+through endpoint-bound mTLS. PostgreSQL independently rejects privileged roles
+and privileged role memberships. Validator outages deny new native logins;
+there is no fallback to password or trust authentication for native roles.
+The controller remains a dependency for new connections. The IdP must be
+available for introspection and for signing-key/discovery refreshes in JWT mode.
+
+Use a PG18 OAuth-capable client/driver with `sslmode=verify-full`, the proxy
+hostname and the explicitly mapped SQL role, for example:
+
+```sh
+psql "host=ep-example.db.customer.example dbname=app user=app_runtime sslmode=verify-full sslrootcert=/path/to/fleet-ca.crt require_auth=oauth oauth_issuer=https://identity.customer.example oauth_client_id=postgres-client"
+```
+
+Register the client and its allowed grants at your IdP. Stock libpq can use its
+device authorization flow when the IdP supports it; applications can provide
+tokens through libpq's public OAuth token hook or an equivalent driver facility.
+A token placed in the password field is not native OAuth negotiation. No
+application schema or SQL function changes are required. Token claims authorize
+the role; they are not automatically exposed as SQL JWT/session variables.
+`system_user` records the authenticated OAuth issuer/subject identity.
+
+The default `app_runtime` role is provider-managed and receives LOGIN with no
+password in native mode, retaining its data-only grants. Other mapped roles must
+already be restricted LOGIN roles. `allowPasswordAuth: true` permits SCRAM for
+other roles; mapped native roles continue to require OAuth. Lifecycle credentials
+and existing expiring `oidc_*` broker logins keep their narrow SCRAM HBA rules.
+Expiry or policy changes reject new logins; existing sessions are not terminated.
+
+Changes to the native issuer, required scopes, role list or password policy need
+a completed suspend/resume to replace an active compute's HBA configuration. The controller does not restart
+an active writer implicitly. An always-on database needs an explicit maintenance
+suspend for that change. Idle and never-suspend policies otherwise work unchanged.
+Native OAuth is currently a Kubernetes fleet capability; Compose rejects OIDC
+configuration rather than silently exposing a password-only deployment.
+
+Deploy matching compute, proxy and controller images from the OAuth source build.
+The previously published RC5 digests do not contain this feature; changing YAML
+alone cannot add it to those images. Build with
+`node neon/build.mjs --verify-native-oauth` (after installing the controller's
+locked npm dependencies) and publish
+through the repository's release workflow before selecting new immutable digests.
+The focused native check is
+`node neon/tests/neon/identity/native-oauth.mjs`, using
+`NEON_OAUTH_ARTIFACT_IMAGE` to select the compiled artifacts image.
+
+### Opaque tokens and token introspection
+
+Each of `identity.management` and `identity.database` accepts `tokenValidation`.
+Omitting it selects local JWT verification. Select `mode: introspection` to
+validate opaque tokens, or to validate JWTs remotely for revocation checks,
+through [RFC 7662 token introspection](https://www.rfc-editor.org/rfc/rfc7662.html).
+The mode is explicit: failed introspection never falls back to JWT verification.
+Native `OAUTHBEARER` carries either format unchanged to PostgreSQL; the existing
+credential-exchange API also accepts introspected database tokens.
+
+For example, add this under `spec.identity.database`:
+
+```yaml
+tokenValidation:
+  mode: introspection
+  endpoint: https://identity.customer.example/oauth2/introspect
+  clientId: neon-database-resource
+  clientSecretRef: neon-database-introspection
+  clientSecretKey: clientSecret
+  authMethod: client_secret_basic
+  cacheSeconds: 30
+```
+
+Create that Secret in the fleet's namespace without putting the credential in
+the fleet YAML, API payload, repository or command-line arguments:
+
+```sh
+kubectl -n customer-a create secret generic neon-database-introspection --from-file=clientSecret=/secure/path/introspection-client-secret
+```
+
+For opaque management tokens, configure the same fields under
+`spec.identity.management.tokenValidation`, preferably with a separate resource
+client and Secret. The operator mounts each credential only in the controller.
+`clientSecretKey` defaults to `clientSecret`. `client_secret_basic` is the default;
+`client_secret_post` is available when the IdP requires form-body client
+authentication. HTTPS verification uses system trust plus the optional shared
+`identity.caSecretRef` private issuer CA. Redirects are rejected.
+
+Configure the IdP's introspection response to include `active: true`, `sub`,
+`aud`, integer `exp`, the configured groups/tenant/project claims and, for native
+database OAuth, the configured scope claim. This deployment deliberately
+requires subject, resource audience and expiry even though RFC 7662 makes those
+metadata fields optional. If `iss` is returned, it must match the configured
+issuer exactly; otherwise the fixed trusted introspection endpoint supplies that
+issuer authority. A returned `token_type` must be Bearer. Inactive, expired,
+wrong-audience or wrongly bound tokens are rejected.
+
+Successful active introspection metadata is cached in each controller process for
+30 seconds by default. Set `cacheSeconds: 60` for one minute or `cacheSeconds: 0`
+to disable reuse, independently for management and database validation. Entries
+never outlive token expiry; simultaneous checks of the same token share one
+provider call. Inactive results, errors and expired entries are not reused, and
+there is no stale-result fallback during an IdP outage. A still-valid cached
+result can authorize a new login during an outage until its cache lifetime ends.
+
+Cache keys isolate the token, audience, complete identity policy and current
+credential/trust material without retaining raw bearer tokens as keys. Credentials
+and private CA contents are read on each lookup, so rotation bypasses old entries
+when Kubernetes updates the mount. The cache is bounded to 1,024 entries and
+16 MiB of serialized metadata per process. Current group, scope and database
+resource authorization still runs for every request; the cache stores metadata,
+not an authorization decision.
+
+Revocation can take up to the configured cache lifetime to affect new native
+logins or management requests; it does not terminate established sessions.
+Previously exchanged SCRAM
+credentials remain usable until their issued expiry unless separately revoked;
+use native OAuth with `cacheSeconds: 0` when each new database login must consult
+introspection. Cache-miss calls have a
+three-second deadline and a bounded response size. TLS, timeout, malformed
+response, HTTP error or IdP outage rejects the new login. Remote validation adds
+connection setup work, including backend verification; pooled SQL queries do not
+perform introspection on every statement.
+
+### Connect through the OIDC credential-exchange API
 
 Give each database an explicit identity binding when provisioning:
 
@@ -258,6 +646,87 @@ records observed generation, physical placement observations and
 `automaticFailoverReady: false`. Cross-worker writer fencing, control-plane HA and
 actual zone-loss recovery still require qualification. Node labels in local
 single-worker tests cannot substitute for that evidence.
+
+## HA and replication options
+
+The available policy is a three-zone storage quorum in one Kubernetes cluster.
+It provides replication building blocks; this repository does not yet claim
+automatic end-to-end HA. Upstream [Neon architecture](https://neon.com/docs/introduction/architecture-overview)
+explains the separate compute, WAL and page-storage layers. Self-hosted routing,
+fencing, metadata and recovery still need their own availability design.
+
+| Layer / option | Configuration available here | Availability implications |
+|---|---|---|
+| WAL replication | `replication: {scope: availability-zones, mode: synchronous-quorum, safekeepers: 3, zones: [zone-a, zone-b, zone-c]}` | Exactly one safekeeper in each selected zone. The majority-quorum design depends on two reachable, durable voters; actual zone-loss recovery remains unqualified in this deployment. |
+| PostgreSQL commit policy | `NeonDatabase.spec.profile: durable` | Required for enterprise synchronous-quorum fleets. Attempts to use `bounded-async` are rejected rather than creating an asynchronous fleet policy. |
+| Page placement | `tier: shared`, `standard`, or `performance` | `shared` requests no secondary; `standard` and `performance` request one. The packaged fleet has two pageservers, assigned to the first two configured zones. Secondary pageservers are page-storage copies, not SQL read replicas. |
+| Metadata availability | `storage.metadataDatabaseSecretRef` | Use your externally operated HA PostgreSQL service. Without this field, metadata is one local PostgreSQL StatefulSet. |
+| Local durable state | `storage.storageClass` | CSI volumes must survive worker loss and have suitable zone attachment behavior. Local-path or node-local storage does not provide this guarantee. |
+| Compute availability | One writer per database/branch, `replicas` limited to 0 or 1 | Existing placement stays pinned to its worker. Safe cross-worker replacement/fencing is not automatically implemented. |
+| Proxy, controllers and KEDA | Default manifests have a single proxy/operator/controller instance and lease-based controller authority | Multi-zone placement and additional replicas are infrastructure work requiring readiness, routing and takeover qualification; there is no `NeonFleet` HA-replica-count setting. Never increase the compute writer count to obtain HA. |
+| Long-term durability | HTTPS object storage plus planned remote-durability drain | Object-store availability, regional durability and backup policies are supplied by the storage provider. S3 availability does not make metadata or the wake/control path HA. |
+| Idle cost | `suspend: {mode: never}` or `{mode: idle, idleSeconds: 300}` | Warm workers favor readiness; worker-to-zero trades idle cost for recovery/startup time. Proxy, controller/scaler, KEDA and required IdP services still need an available home. |
+
+Only the displayed replication scope, mode and safekeeper count are accepted by
+`NeonFleet`; two-zone, five-voter, cross-region, cross-cluster, asynchronous fleet
+replication, SQL read replicas and multi-writer modes are not exposed options.
+`bounded-async` remains an explicit non-enterprise deployment profile, with the
+limitations in [durability and qualification](#durability-retention-and-qualification).
+It must not be represented as a cross-zone one-second-loss guarantee.
+
+More independent database computes can distribute independent workloads. Adding
+compute replicas does not increase one database's write throughput. Storage
+sharding distributes storage work and is separate from SQL writer replication;
+maintain sufficient physical pageserver capacity before increasing shards.
+
+### External HA metadata PostgreSQL
+
+Provision a dedicated database and credentials at your metadata provider. Its
+Secret contains `url`; use a verified TLS DSN. If a private CA is needed, include
+`ca.crt` and refer to its container path in the DSN, for example
+`sslrootcert=/run/external-metadata/ca.crt`. Store the complete credential-bearing
+DSN in a protected file, then create the Secret:
+
+```sh
+kubectl --context "$NEON_KUBE_CONTEXT" -n "$NEON_NAMESPACE" create secret generic customer-metadata-ha --from-file=url=/secure/metadata-url --from-file=ca.crt=/secure/metadata-ca.crt
+```
+
+Add this field to the existing fleet's `storage` object **before initial
+provisioning**, alongside its object-store reference and CSI class:
+
+```yaml
+storage:
+  objectStoreSecretRef: customer-s3
+  storageClass: durable-csi
+  metadataDatabaseSecretRef: customer-metadata-ha
+```
+
+Omit the CA file when system trust is sufficient. The local metadata StatefulSet
+and Service are omitted; the external database is not stopped by fleet suspension.
+Its HA, failover endpoint, backups, credential rotation and cost are your
+provider's responsibility. This setting is not a migration command for existing
+local metadata. Storage identity/topology changes are rejected after provisioning
+and require a separately planned migration.
+
+### Failure and recovery boundaries
+
+| Situation | Expected operational boundary |
+|---|---|
+| Planned compute suspension | Close admission, wait for safe SQL/WAL drain, retain storage identity, then stop compute. |
+| Planned whole-storage suspension | Stop only after every managed frontier is verified remotely durable; failed verification leaves storage running. |
+| One safekeeper or zone unavailable | Quorum is intended to preserve durable operation when the remaining majority and required storage/control services are healthy. Inspect actual placement, quorum and recovery; the local acceptance test does not establish a zone SLA. |
+| Compute worker lost or partitioned | Positively fence the old writer before any replacement. No public force-promote or automatic cross-worker failover API is provided. |
+| Metadata service unavailable | Storage/control operations can be unavailable even with healthy S3 and safekeepers. External HA metadata must be qualified separately. |
+| Introspection/validator unavailable | Validator unavailability rejects new native authentications. An IdP introspection outage rejects cache misses and expired entries; valid cached metadata remains usable within `cacheSeconds`. Existing sessions are not automatically terminated; JWT mode separately depends on discovery/key refreshes. |
+| Regional loss or bucket loss | A native snapshot in the same bucket is not independent DR. Keep tested external exports/copies and restore the metadata, Secrets and resource definitions together. |
+
+Inspect `NeonFleet.status.automaticFailoverReady`; the current implementation
+reports `false`. `zonePlacementConfigured` or `Provisioned` must not be promoted
+to an HA claim. Before offering a production availability/RPO/RTO commitment,
+qualify real zone failures, single-writer fencing, PVC reattachment, metadata and
+control-path takeover, object-store failure, and restoration from independent
+backups. Keep those qualification exercises separate from the small setup smoke
+check below.
 
 ## Platform installation: Kubernetes with KEDA
 
@@ -330,6 +799,7 @@ metadata:
     klustr.io/project: analytics
 spec:
   database: app
+  identity: {tenant: acme, project: analytics}
   size: small
   tier: standard
   suspend:
@@ -384,11 +854,146 @@ Default provider split settings begin at 16GiB and allow subsequent splits up to
 shrinking shard count is not implemented. Sharding does not provision physical
 pageservers or cloud nodes: providers must maintain sufficient fleet capacity.
 
+## Management API reference
+
+The fleet controller serves verified HTTPS on Service `neon-controller:8080`.
+It is an internal API by default. For an operator session, port-forward it while
+retaining the service hostname for TLS verification:
+
+```sh
+kubectl --context "$NEON_KUBE_CONTEXT" -n "$NEON_NAMESPACE" port-forward service/neon-controller 18443:8080
+```
+
+In another terminal, set these values for that session. Obtain a management
+access token from your IdP for `management.audience` and store a protected header
+file containing `Authorization: Bearer <access-token>`. Do not commit the header
+file or print its contents in agent logs. Export only the public service CA:
+
+```sh
+umask 077
+export NEON_KUBE_CONTEXT=YOUR_CONTEXT
+export NEON_NAMESPACE=customer-a
+export NEON_CA=/secure/customer-a-ca.crt
+export NEON_MANAGEMENT_HEADERS=/secure/customer-a-management.headers
+export NEON_API=https://neon-controller.customer-a.svc.cluster.local:18443
+export NEON_API_RESOLVE=neon-controller.customer-a.svc.cluster.local:18443:127.0.0.1
+kubectl --context "$NEON_KUBE_CONTEXT" -n "$NEON_NAMESPACE" get secret neon-service-ca -o jsonpath='{.data.ca\.crt}' | base64 --decode > "$NEON_CA"
+neon_api() {
+  curl --fail-with-body --cacert "$NEON_CA" --resolve "$NEON_API_RESOLVE" --header @"$NEON_MANAGEMENT_HEADERS" "$@"
+}
+neon_api "$NEON_API/v1/fleet"
+```
+
+Replace `customer-a` consistently when using a different namespace. These
+port-forward examples need `kubectl`, `curl`, `base64`, and `jq` for the JSON
+editing example below. An approved in-cluster backend can call the Service
+directly using verified TLS and the appropriate network-policy caller label.
+Do not expose the internal proxy/compute authorization callbacks as a customer
+management API. Management RBAC is fleet/namespace-scoped: a database operator
+can manage databases across that fleet. Database tenant/project claims protect
+SQL access; they do not narrow a management role to one project. Use a dedicated
+customer fleet/namespace, or an additional platform authorization boundary, when
+untrusted customers need isolated management access.
+
+This repository's `/v1/...` endpoints are its own control-plane
+contract, not the hosted Neon Cloud management API.
+
+### API methods and authorization
+
+`admin` below means `fleet-admin`; `operator` means `database-operator`;
+`backup` means `backup-operator`. All four management roles, including `viewer`,
+can use the listed GET methods. Database tokens do not grant management access.
+
+| Method and path | Authorization | Request / result |
+|---|---|---|
+| `GET /v1/fleet` | Any management role | `200` with `{name, spec, status}` for the established namespace owner. |
+| `PUT /v1/fleet` | admin | Bare complete fleet spec; `202` with `{name, generation}`. No Kubernetes resource envelope. |
+| `GET /v1/databases/{name}` | Any management role | `200` with `{name, spec, status}`. |
+| `PUT /v1/databases/{name}` | admin or operator | Bare database spec/overrides; create or revise, `202` with `{name, generation}`. |
+| `POST /v1/databases/{name}/events` | admin or operator | `{id, holdSeconds}` activity hold; `202`. |
+| `POST /v1/databases/{name}/suspend` | admin or operator | No body required; `202`. |
+| `POST /v1/databases/{name}/resume` | admin or operator | No body required; `202`. |
+| `DELETE /v1/databases/{name}` | admin | `{}` retains data; `{mode: "purge", confirm: "name"}` requests permanent purge; `202`. |
+| `POST /v1/databases/{name}/branches` | admin or operator | `{name, backup? OR lsn? OR timestamp?, size?, suspend?, profile?, allowedIps?}`; `202`. Omit the recovery selector to clone the current frontier. |
+| `GET /v1/databases/{name}/history` | Any management role | `200` retained-history/frontier view; can wake storage. |
+| `GET /v1/databases/{name}/backups` | Any management role | `200` with `{backups: [...]}`. |
+| `POST /v1/databases/{name}/backups` | admin or backup | `{name, retentionSeconds?}`; `202`. |
+| `GET /v1/backups/{backup}` | Any management role | `200` recovery-point view. |
+| `DELETE /v1/backups/{backup}` | admin or backup | Requests recovery-point deletion; `202`, subject to dependencies. |
+| `POST /v1/databases/{name}/credentials` | Database audience, resource and mapped SQL role | `{role}`; `201` secret-bearing credential response. Use a database token, not the management header file above. |
+
+There is no REST fleet-creation/deletion endpoint or collection-list endpoint for
+all databases. Bootstrap/create/delete a `NeonFleet` and list resources through
+the Kubernetes API. Fleet deletion retains data behind a finalizer. Native
+`GET /get_endpoint_access_control`, `GET /wake_compute`, `POST /authorize_oauth`
+and `POST /v1/databases/{name}/oauth/validate` are internal service protocols,
+protected by proxy service credentials or endpoint-bound mTLS. Applications
+should connect through PostgreSQL rather than call those protocols themselves.
+
+### Request bodies and reconciliation
+
+Fleet PUT replaces the complete desired spec. Read its current view, extract
+`.spec`, edit the identity/defaults fields, then submit only that object:
+
+```sh
+neon_api "$NEON_API/v1/fleet" --output /secure/fleet-view.json
+jq '.spec' /secure/fleet-view.json > /secure/fleet-spec.json
+# Edit /secure/fleet-spec.json, retaining required storage and replication fields.
+neon_api -X PUT -H 'Content-Type: application/json' --data-binary @/secure/fleet-spec.json "$NEON_API/v1/fleet"
+```
+
+Keep one authoritative policy writer, such as GitOps or a management backend.
+The API uses Kubernetes resource versions internally but has no client-facing
+ETag/If-Match contract. After a conflict, re-read rather than blindly replaying
+a stale complete fleet policy. Domain, storage identity, zone topology and
+metadata-provider changes require migration; a successful PUT acceptance does
+not mean those changes can be reconciled in place.
+
+For database provisioning, save this **JSON spec**, not a Kubernetes resource,
+to `/secure/events-spec.json` and submit it:
+
+```json
+{
+  "database": "app",
+  "identity": {"tenant": "acme", "project": "billing"},
+  "size": "small",
+  "tier": "standard",
+  "profile": "durable",
+  "suspend": {"mode": "idle", "idleSeconds": 300}
+}
+```
+
+```sh
+neon_api -X PUT -H 'Content-Type: application/json' --data-binary @/secure/events-spec.json "$NEON_API/v1/databases/events"
+neon_api "$NEON_API/v1/databases/events"
+```
+
+Database PUT merges supplied top-level fields with an existing definition;
+omitted existing overrides stay explicit. New omitted policy fields inherit
+fleet defaults. Changing database/user identity or branch ancestry in place is
+restricted; use a new database/branch for a new SQL identity. Use the dedicated
+suspend/resume/delete methods for lifecycle commands; those command fields are
+not accepted through database PUT. See [lifecycle and retention](#suspend-resume-and-delete)
+and [recovery methods](#history-backups-and-branches) before retiring data.
+
+`202` means accepted, not complete. Poll the resource's `status`, observed
+generation where exposed, and phase/reason. Do not infer successful provisioning,
+backup readiness, safe shutdown or HA from the HTTP code alone. Common responses
+are `401` for invalid authentication, `403` for authorization failure, `404` for
+missing resources/routes, `409` for lifecycle/ownership conflicts, `422` for
+invalid input, and `503` for unavailable leadership, storage, IdP or dependencies.
+Retry bounded transient failures; correct policy or credentials for permanent
+rejections. The emitted management audit operation ID correlates request outcome
+with the verified issuer/subject; accepted commands still need status tracking.
+
 ## Webhooks and event-driven activation
 
-The HTTPS controller accepts requests from a trusted platform backend. Use the
-separate `neon-management-auth` Secret, key `token`; proxy authentication does not
-grant management access. The default NetworkPolicy permits webhook callers labeled
+The HTTPS controller accepts requests from a trusted platform backend. Enterprise
+callers use the configured management audience and RBAC, with JWT or opaque
+introspection as selected. The separate `neon-management-auth` Secret, key `token`,
+is used for standalone static authentication or explicitly enabled enterprise
+break-glass access. Proxy authentication does not grant management access.
+The default NetworkPolicy permits webhook callers labeled
 `neon.klustr.io/webhook-client: "true"` in the namespace. This is not a public
 end-user identity/authorization service.
 
@@ -420,11 +1025,11 @@ then signal demand and await the full dependency chain.
 These management operations use the same authenticated HTTPS API above. They are
 asynchronous: 202 means accepted; poll `GET /v1/databases/<name>` for completion.
 
-For example, with `NEON_API`, `NEON_CA` and a management token supplied securely:
+For example, using the verified TLS/API helper defined above:
 
 ```sh
-curl --fail-with-body --cacert "$NEON_CA" -H "Authorization: Bearer $NEON_MANAGEMENT_TOKEN" -X POST "$NEON_API/v1/databases/events/suspend"
-curl --fail-with-body --cacert "$NEON_CA" -H "Authorization: Bearer $NEON_MANAGEMENT_TOKEN" -X POST "$NEON_API/v1/databases/events/resume"
+neon_api -X POST "$NEON_API/v1/databases/events/suspend"
+neon_api -X POST "$NEON_API/v1/databases/events/resume"
 ```
 
 | Request | Behavior |
@@ -566,6 +1171,138 @@ must match `COMPOSE_PROJECT_NAME` (default `neon`). Port defaults to loopback 55
 Set `DOCKER_GID` to the Docker socket group on Linux. The controller's socket access
 grants host-level Docker authority; use a trusted host. Never use `down -v` to sleep
 an environment. Credentials/CA live in its retained state volume.
+
+## Kubernetes resource inventory
+
+| Resource | Owner / purpose |
+|---|---|
+| `NeonFleet` / `neonfleets.neon.klustr.io` | Customer/provider policy in one namespace; one established owner. [Enterprise CRD](neon/packaging/kubernetes/enterprise/fleet-crd.yaml). |
+| `NeonDatabase` / `neondatabases.neon.klustr.io` | Database sizing, tier, OIDC ownership binding and lifecycle; exposes the drain-aware scale subresource. [Database CRD](neon/packaging/kubernetes/keda/database-crd.yaml). |
+| `NeonBackup` / `neonbackups.neon.klustr.io` | Retained native recovery point and status. [Backup CRD](neon/packaging/kubernetes/keda/backup-crd.yaml). |
+| `NeonStorageFleet` / `neonstoragefleets.neon.klustr.io` | Shared storage demand and safe zero/one scale target, normally named `storage`. [Storage-fleet CRD](neon/packaging/kubernetes/keda/fleet-crd.yaml). |
+| KEDA `ScaledObject` and `TriggerAuthentication` | External-push demand over mTLS gRPC; scale the custom resources, not raw writer Deployments. |
+| Enterprise operator Deployment, ServiceAccount and RBAC | Reconcile the namespace stack; the shared `neon-fleet-node-reader` ClusterRole grants read-only node discovery. [Operator resources](neon/packaging/kubernetes/enterprise/operator.yaml). |
+| `neon-cluster` ConfigMap | Provider configuration derived from the fleet; not an independently edited authority in enterprise mode. |
+| `neon-ep-*` ConfigMaps and compute Deployments/Services | Generated endpoint definitions, placement, revisions and runtime state. Do not manually raise writer replicas or edit routing as a scaling shortcut. |
+| Pageservers, safekeepers, broker, storage controller and optional local metadata | Shared storage architecture; the operator/controller manage placement and safe suspension. [Base workloads](neon/packaging/kubernetes/base/storage.yaml). |
+| `neon-proxy` Service | Internal PostgreSQL front door on port 5432; attach a provider-managed L4 LoadBalancer/DNS endpoint. |
+| `neon-controller` Service | HTTPS API on 8080; health/storage hooks on 9090; KEDA scaler on 9091. Health ports are not management API endpoints. |
+
+### Secret and trust inventory
+
+| Secret | Contents / handling |
+|---|---|
+| `spec.storage.objectStoreSecretRef` | Customer-created AWS-compatible access keys, region, S3 endpoint, bucket and prefix. |
+| `spec.identity.caSecretRef` | Optional customer-created IdP `ca.crt`. |
+| Each `tokenValidation.clientSecretRef` | Customer-created introspection credential under the selected key; mounted only into the controller. |
+| `spec.storage.metadataDatabaseSecretRef` | Optional customer-created metadata `url` and CA files. |
+| `neon-service-ca` | Public internal CA certificate; export this certificate for client trust when using bootstrap-issued proxy certificates. |
+| `neon-proxy-tls`, `neon-controller-tls`, `<database>-compute-tls` | Generated service certificates/private keys. Preserve the trust chain and plan certificate renewal; full service-CA/certificate rotation remains qualification work. |
+| `<database>-oauth` | Generated native HBA, endpoint-specific validator client certificate/key and CA. Not an application credential. |
+| `neon-keda-client-tls` | Generated client identity for KEDA scaler authentication. |
+| `neon-management-auth`, `neon-controller-auth` | Separate management break-glass and internal proxy service credentials. Neither replaces customer database authorization. |
+| `<database>-client`, `<database>-admin`, `<database>-roles`, `<database>-compute-spec` | Provider bootstrap/administrative credentials and native runtime inputs. Give customer applications mapped native roles or issued expiring credentials, not the privileged bootstrap owner. |
+| `neon-bootstrap-state` and service/storage configuration Secrets | Retained signing keys, CA authority and storage/bootstrap state. Include them in protected recovery procedures; do not dump them into agent output. |
+
+For external PostgreSQL access, create a provider-owned L4 Service selecting the
+proxy, for example:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: neon-proxy-public
+  namespace: customer-a
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: neon-proxy
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+```
+
+Point your configured wildcard DNS at the resulting front door. Keep PostgreSQL
+TLS/SNI intact; bootstrap certificates use the configured wildcard domain and
+need client trust in the exported CA. Confirm the load balancer's source-IP
+preservation and routing behavior before relying on `clientCIDRs`: after SNAT,
+the proxy otherwise sees the intermediary's address. Provider-specific load
+balancer annotations, public certificate automation and ingress HA remain
+deployment infrastructure, not additional `NeonFleet.spec` fields.
+
+## Small setup verification and troubleshooting
+
+For an agent handoff, record the selected context/namespace, fleet/database names,
+qualified image digests, CSI class, physical zones, S3 location, IdP issuer and
+audiences, Secret **names**, desired idle policy and required recovery objectives.
+Record reconciliation status and unresolved gates. Keep access tokens, keys,
+passwords and credential-bearing DSNs out of the handoff.
+
+Start with read-only observations:
+
+```sh
+kubectl --context "$NEON_KUBE_CONTEXT" -n "$NEON_NAMESPACE" get neonfleet,neondb,neonbackups,neonstoragefleet
+kubectl --context "$NEON_KUBE_CONTEXT" -n "$NEON_NAMESPACE" get pods,pvc,scaledobject,triggerauthentication
+kubectl --context "$NEON_KUBE_CONTEXT" -n "$NEON_NAMESPACE" get events --sort-by=.lastTimestamp
+kubectl --context "$NEON_KUBE_CONTEXT" -n "$NEON_NAMESPACE" logs deployment/neon-tenant-controller --tail=100
+```
+
+Then use one owned test database with a five-minute idle policy. Authenticate
+with the intended client/role and check:
+
+```sql
+SELECT current_database(), current_user, system_user,
+       '{"probe":"connected"}'::jsonb ->> 'probe';
+```
+
+This verifies authentication and ordinary JSONB SQL, not durable writes. For the
+full setup smoke check, commit one small JSONB row through an existing application
+table/migration, record its key, let compute reach zero, reconnect and read it
+back. If the last database is idle, separately observe the storage fleet drain
+and wake. Check one rejected token for scope/audience/ownership and confirm it
+does not cause wake demand. Use resource status to distinguish `Provisioned`,
+actual replicas, dormancy and an explicitly `Suspended` endpoint. No large data
+load or benchmark matrix is needed for installation verification.
+
+| Symptom | Check |
+|---|---|
+| Fleet stays `Pending` | `status.reason/message`, real Ready zone-labeled nodes, taints, CSI topology/capacity, image pulls, S3 Secret keys and ownership conflicts. |
+| Fleet is `Provisioned`, but not serving | Deployment/Pod readiness, database status, leadership and intentionally zero worker counts; provisioning is not a serving-state assertion. |
+| Controller Pod cannot mount a Secret | Namespace, Secret reference/key, optional IdP CA and separate management/database introspection mounts. Create referenced Secrets before enabling their policy. |
+| `OIDC_TOKEN_INVALID` / `OIDC_ACCESS_DENIED` | Correct token type, issuer, audience, expiry, allowed JWT algorithm, array-valued groups, role bindings and exact database tenant/project claims. |
+| `OIDC_INTROSPECTION_UNAVAILABLE` | HTTPS chain, private CA mount, resource-server credential/key, authentication method, fixed endpoint, provider HTTP errors and three-second deadline. Do not switch to permissive authentication to bypass an outage. |
+| Native OAuth requests cleartext password or SCRAM | Matching rebuilt proxy/compute/controller release, SNI hostname/domain mapping, compatible certificate SANs and explicit `oauth.enabled: true`. Keep `require_auth=oauth` in client verification. |
+| Client has no OAuth flow | PG18 OAuth-capable libpq/driver, its installed OAuth client library, IdP grant/client registration or application token hook. Supplying a token as a password does not implement native OAuth. |
+| Database refuses wake | Manual suspension/retirement, retiring fleet, policy rejection, missing dependencies or failed durability checks. An activity event cannot override explicit suspension; use resume. |
+| Active authentication configuration will not change | Complete a safe suspend/resume for HBA-affecting policy changes; quiesce active work rather than force-killing a writer. |
+| Storage remains running after compute sleeps | Other active/always-on databases, pending recovery work, unknown tenants/timelines, or an unverified remote frontier. Preserve the drain guard and inspect its reason. |
+| Changed S3/domain/metadata/zone policy does not apply | Established storage identity is protected. Plan a migration rather than deleting finalizers or replacing stateful resources. |
+
+### Source and upstream resources
+
+Use the versioned source contracts when writing automation:
+
+- [Fleet validation](neon/controller/tenant-compute/src/domain/fleet/FleetSpecification.mjs)
+  and [fleet resource generation](neon/controller/tenant-compute/src/infrastructure/provisioning/FleetResources.mjs).
+- [Identity policy](neon/controller/tenant-compute/src/domain/identity/IdentityPolicy.mjs),
+  [validation modes](neon/controller/tenant-compute/src/domain/identity/TokenValidationPolicy.mjs)
+  and [native OAuth policy](neon/controller/tenant-compute/src/domain/identity/NativeOAuthPolicy.mjs).
+- [Database API routes](neon/controller/tenant-compute/src/api/database/DatabaseRoutes.mjs),
+  [fleet API routes](neon/controller/tenant-compute/src/api/fleet/FleetRoutes.mjs)
+  and [database specification](neon/controller/tenant-compute/src/domain/database/DatabaseContracts.mjs).
+- [PG18 OAuth](https://www.postgresql.org/docs/18/auth-oauth.html),
+  [libpq connection options](https://www.postgresql.org/docs/18/libpq-connect.html),
+  [OIDC discovery](https://openid.net/specs/openid-connect-discovery-1_0.html)
+  and [RFC 7662 introspection](https://www.rfc-editor.org/rfc/rfc7662.html).
+- [KEDA external scalers](https://keda.sh/docs/2.21/concepts/external-scalers/),
+  [ScaledObject contract](https://keda.sh/docs/2.21/reference/scaledobject-spec/)
+  and the [checked-in KEDA resources](neon/packaging/kubernetes/keda).
+- [Neon architecture](https://neon.com/docs/introduction/architecture-overview),
+  [history window](https://neon.com/docs/postgres/backup-restore/history-window)
+  and [backups](https://neon.com/docs/postgres/backup-restore/backups). Hosted
+  product guarantees and API options do not automatically apply to this fork.
 
 ## Durability, retention and qualification
 

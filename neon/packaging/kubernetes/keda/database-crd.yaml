@@ -41,9 +41,6 @@ spec:
           properties:
             spec:
               type: object
-              required:
-                - size
-                - tier
               properties:
                 identity:
                   type: object
@@ -73,24 +70,21 @@ spec:
                 backup:
                   type: object
                   x-kubernetes-validations:
-                    - rule: self.scheduleSeconds == 0 || (self.scheduleSeconds >= 300 && self.retentionSeconds >= self.scheduleSeconds)
+                    - rule: "!has(self.scheduleSeconds) || self.scheduleSeconds == 0 || (self.scheduleSeconds >= 300 && (!has(self.retentionSeconds) || self.retentionSeconds >= self.scheduleSeconds))"
                       message: Schedule must be at least five minutes and fit retention
                   properties:
                     historySeconds:
                       type: integer
                       minimum: 0
                       maximum: 2592000
-                      default: 604800
                     scheduleSeconds:
                       type: integer
                       minimum: 0
                       maximum: 2592000
-                      default: 0
                     retentionSeconds:
                       type: integer
                       minimum: 300
                       maximum: 31536000
-                      default: 604800
                 branchFrom:
                   type: object
                   required:
@@ -158,21 +152,16 @@ spec:
                     maxLength: 64
                 suspend:
                   type: object
-                  default:
-                    mode: idle
-                    idleSeconds: 300
                   properties:
                     mode:
                       type: string
                       enum:
                         - idle
                         - never
-                      default: idle
                     idleSeconds:
                       type: integer
                       minimum: 1
                       maximum: 604800
-                      default: 300
                 databasePolicies:
                   type: object
                   additionalProperties:

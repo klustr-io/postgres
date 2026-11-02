@@ -13,7 +13,7 @@ COPY doc/ /pgsource/v18/doc/
 RUN mkdir -p /pgbuild/monorepo /out/qualification \
     && cd /pgbuild/monorepo \
     && /pgsource/v18/configure --prefix=/opt/postgres/v18 --with-openssl --with-icu \
-       --with-lz4 --with-zstd --with-libxml --with-libxslt --with-libseccomp --enable-tap-tests \
+       --with-lz4 --with-zstd --with-libxml --with-libxslt --with-libseccomp --with-libcurl --enable-tap-tests \
     && make -j${BUILD_JOBS} world-bin && make install-world-bin
 RUN chown -R 10002:10002 /pgbuild/monorepo /pgsource/v18 /opt/postgres/v18
 USER 10002:10002
@@ -48,7 +48,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=shared \
     && cp target/release/pageserver target/release/safekeeper target/release/storage_controller \
        target/release/compute_ctl target/release/storage_broker target/release/proxy \
        target/release/neon_local target/release/endpoint_storage /out/bin/ \
-    && for extension in neon neon_rmgr neon_walredo neon_utils; do \
+    && for extension in neon neon_rmgr neon_walredo neon_utils klustr_oauth; do \
        mkdir -p build/extensions/$extension; \
        make -C build/extensions/$extension -f /source/pgxn/$extension/Makefile \
        PG_CONFIG=/opt/postgres/v18/bin/pg_config NEON_CARGO_ARTIFACT_TARGET_DIR=/source/target/release \
@@ -56,9 +56,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=shared \
     && cargo test --locked --release -p postgres-protocol2 authentication::sasl \
     && cargo metadata --locked --format-version=1 > /out/qualification/dependency-resolution.json
 RUN rm -rf /out/qualification/runtime-tests \
-    && strip --strip-unneeded /out/bin/* /opt/postgres/v18/bin/postgres /opt/postgres/v18/lib/neon*.so \
+    && strip --strip-unneeded /out/bin/* /opt/postgres/v18/bin/postgres /opt/postgres/v18/lib/neon*.so /opt/postgres/v18/lib/klustr_oauth.so \
     && sha256sum /out/bin/* > /out/qualification/binaries.sha256 \
-    && sha256sum /opt/postgres/v18/bin/postgres /opt/postgres/v18/lib/neon*.so > /out/qualification/postgres-binaries.sha256
+    && sha256sum /opt/postgres/v18/bin/postgres /opt/postgres/v18/lib/neon*.so /opt/postgres/v18/lib/klustr_oauth.so > /out/qualification/postgres-binaries.sha256
 COPY neon/sources.json /out/qualification/sources.json
 COPY neon/build-inputs.json /out/qualification/build-inputs.json
 COPY neon/packaging/neon/native-dependencies.lock.json /out/qualification/native-dependencies.lock.json
@@ -80,6 +80,7 @@ LABEL org.opencontainers.image.source="https://github.com/klustr-io/postgres" \
       org.opencontainers.image.revision="${SOURCE_REVISION}" \
       io.klustr.release-status="single-checkout-source-candidate"
 FROM runtime AS compute
+LABEL io.klustr.native-oauth="OAUTHBEARER/klustr_oauth"
 COPY --from=roots /rootfs/compute/ /
 EXPOSE 5432 3080
 ENTRYPOINT ["/usr/local/bin/compute_ctl"]
@@ -101,6 +102,7 @@ EXPOSE 50051
 ENTRYPOINT ["/usr/local/bin/storage_broker"]
 CMD ["--listen-addr=0.0.0.0:50051"]
 FROM runtime AS proxy
+LABEL io.klustr.native-oauth="OAUTHBEARER"
 COPY --from=roots /rootfs/proxy/ /
 EXPOSE 5432 7001
 ENTRYPOINT ["/usr/local/bin/proxy"]

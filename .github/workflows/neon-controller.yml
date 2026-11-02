@@ -9,7 +9,11 @@ on:
       - neon/packaging/docker/shared/debian.sources
       - neon/packaging/kubernetes/base/**
       - neon/packaging/kubernetes/keda/**
+      - neon/packaging/kubernetes/fleet-stack.json
+      - neon/packaging/deploy/render.mjs
+      - neon/dev/quality/**
       - neon/tests/neon/unit/**
+      - .github/actions/neon-controller-check/**
       - .github/workflows/neon-controller.yml
   workflow_dispatch:
 permissions:
@@ -31,10 +35,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24.19.0'
-      - name: Focused lifecycle and scaler checks
-        run: |
-          npm ci --prefix neon/controller/tenant-compute --ignore-scripts --no-audit --no-fund
-          node --test neon/tests/neon/unit/*.test.mjs
+      - uses: ./.github/actions/neon-controller-check
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         with:
           version: v0.36.1

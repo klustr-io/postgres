@@ -3,9 +3,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {stringify} from '../../controller/tenant-compute/node_modules/yaml/dist/index.js';
+import {execFileSync} from 'node:child_process';
+import {parseAllDocuments, stringify} from '../../controller/tenant-compute/node_modules/yaml/dist/index.js';
 import {controllerResources} from '../kubernetes/tenant-controller.mjs';
-import {enterpriseInstallation} from '../../controller/tenant-compute/deploy/enterprise-install.mjs';
+import {EnterpriseInstallation as enterpriseInstallation} from '../../controller/tenant-compute/src/infrastructure/provisioning/EnterpriseInstallation.mjs';
 const root = path.dirname(fileURLToPath(import.meta.url));
 const digests = {compute: 'f84df9577c542dbf3be8a789d301716f77c7d6ac5c79bfd519818834b3427aef',
   pageserver: 'b3a597ad16b77c8a611f8c18481a7b87bb258d919d4d458ad36c5f465373ae28',
@@ -20,7 +21,7 @@ const pageserver = 'cat /run/neon/pageserver.toml > /var/lib/neon/pageserver.tom
 const metadataCommand = 'if [ ! -f /var/lib/neon/metadata/PG_VERSION ]; then /opt/postgres/v18/bin/initdb -D /var/lib/neon/metadata -U neon --pwfile=/run/metadata/password --auth-host=scram-sha-256; fi; printf "local all all trust\n host postgres neon 0.0.0.0/0 scram-sha-256\n host postgres neon ::/0 scram-sha-256\n" > /var/lib/neon/metadata/pg_hba.conf; exec /opt/postgres/v18/bin/postgres -D /var/lib/neon/metadata -c listen_addresses=* -p 5432';
 const storageController = 'exec /usr/local/bin/storage_controller --listen 0.0.0.0:1234 --initial-split-threshold 17179869184 --initial-split-shards 2 --split-threshold 1099511627776 --max-split-shards 16 --control-plane-url http://neon-controller:9090 --control-plane-jwt-token "$(cat /run/neon/controller-token)" --address-for-peers http://storage-controller:1234 --database-url "postgresql://neon:$(cat /run/metadata/password)@metadata:5432/postgres" --public-key="$(cat /run/neon/storage.pub)" --jwt-token "$(cat /run/neon/pageserver.jwt)" --safekeeper-jwt-token "$(cat /run/neon/safekeeper.jwt)" --peer-jwt-token "$(cat /run/neon/peer.jwt)"';
 const sk = id => `exec /usr/local/bin/safekeeper -D /var/lib/neon --id ${id} --listen-pg 0.0.0.0:5454 --listen-http 0.0.0.0:7676 --advertise-pg safekeeper-${id}:5454 --broker-endpoint http://storage-broker:50051 --pg-auth-public-key-path /run/neon/storage.pub --http-auth-public-key-path /run/neon/storage.pub --auth-token-path /run/neon/safekeeper.jwt --remote-storage "$(cat /run/neon/remote.toml)"`;
-const bootstrapCommand = operation => ['/usr/local/bin/node', '/app/deploy/bootstrap.mjs', operation];
+const bootstrapCommand = operation => ['/usr/local/bin/node', '/app/src/composition/TenantProvisioningInit.mjs', operation];
 const cluster = {
   name: 'neon', domain: 'db.local', computeImage: image('compute'),
   clientCIDRs: ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.1/32'],
@@ -44,7 +45,7 @@ const stateMount = (subpath, target = '/run/neon') => ({type: 'volume', source: 
 const helperService = {...shared, image: '${NEON_CONTROLLER_IMAGE:-' + helper + '}',
   entrypoint: ['/usr/local/bin/node'], volumes: ['state:/state', configMount]};
 const compose = {name: 'neon', services: {
-  init: {...helperService, user: '0:0', restart: 'no', cap_add: ['CHOWN', 'FOWNER', 'DAC_OVERRIDE'], command: ['/app/deploy/bootstrap.mjs', 'init']},
+  init: {...helperService, user: '0:0', restart: 'no', cap_add: ['CHOWN', 'FOWNER', 'DAC_OVERRIDE'], command: ['/app/src/composition/TenantProvisioningInit.mjs', 'init']},
   metadata: {...shared, image: image('compute'), entrypoint: shell(metadataCommand),
     volumes: [stateMount('metadata', '/run/metadata'), 'metadata:/var/lib/neon'], depends_on: initDepends,
     healthcheck: {test: ['CMD', '/opt/postgres/v18/bin/pg_isready', '-U', 'neon', '-d', 'postgres'], interval: '3s', timeout: '3s', retries: 30}},
@@ -57,9 +58,9 @@ const compose = {name: 'neon', services: {
     volumes: [stateMount('pageserver'), 'pageserver-2:/var/lib/neon'], depends_on: {...initDepends, 'storage-controller': {condition: 'service_started'}}},
   ...Object.fromEntries([1, 2, 3].map(id => ['safekeeper-' + id, {...shared, image: image('safekeeper'), entrypoint: shell(sk(id)), environment: s3env,
     volumes: [stateMount('safekeeper'), 'safekeeper-' + id + ':/var/lib/neon'], depends_on: initDepends}])),
-  provision: {...helperService, restart: 'on-failure:5', command: ['/app/deploy/bootstrap.mjs', 'provision'], depends_on: {
+  provision: {...helperService, restart: 'on-failure:5', command: ['/app/src/composition/TenantProvisioningInit.mjs', 'provision'], depends_on: {
     pageserver: {condition: 'service_started'}, 'pageserver-2': {condition: 'service_started'}, ...Object.fromEntries([1, 2, 3].map(id => ['safekeeper-' + id, {condition: 'service_started'}]))}},
-  controller: {...helperService, command: ['/app/server.mjs'], volumes: ['state:/state', configMount, '/var/run/docker.sock:/var/run/docker.sock'],
+  controller: {...helperService, command: ['/app/src/composition/ControllerInit.mjs'], volumes: ['state:/state', configMount, '/var/run/docker.sock:/var/run/docker.sock'],
     // Docker socket authority is explicit. Read-only bind flags do not restrict API methods.
     group_add: ['${DOCKER_GID:-0}'],
     environment: {NEON_PLATFORM: 'compose', NEON_DOCKER_PROJECT: '${COMPOSE_PROJECT_NAME:-neon}', NEON_DOCKER_NETWORK: '${COMPOSE_PROJECT_NAME:-neon}-backend',
@@ -166,16 +167,16 @@ output('../kubernetes/base/controller.yaml', {apiVersion: 'v1', kind: 'List', it
 output('../kubernetes/base/kustomization.yaml', {apiVersion: 'kustomize.config.k8s.io/v1beta1', kind: 'Kustomization', namespace: ns,
   resources: ['namespace.yaml', 'cluster.yaml', 'bootstrap.yaml', 'storage.yaml', 'controller.yaml']});
 
-const databaseSchema = {type: 'object', required: ['size', 'tier'], properties: {
+const databaseSchema = {type: 'object', properties: {
   identity: {type: 'object', required: ['tenant', 'project'], properties: {
     tenant: {type: 'string', pattern: '^[a-z][a-z0-9-]{0,62}$'}, project: {type: 'string', pattern: '^[a-z][a-z0-9-]{0,62}$'}}},
   lifecycle: {type: 'string', enum: ['active', 'suspended', 'retired'], default: 'active'},
   deletionPolicy: {type: 'string', enum: ['Retain', 'Delete'], default: 'Retain'},
   backup: {type: 'object', 'x-kubernetes-validations': [
-    {rule: 'self.scheduleSeconds == 0 || (self.scheduleSeconds >= 300 && self.retentionSeconds >= self.scheduleSeconds)', message: 'Schedule must be at least five minutes and fit retention'}], properties: {
-    historySeconds: {type: 'integer', minimum: 0, maximum: 2592000, default: 604800},
-    scheduleSeconds: {type: 'integer', minimum: 0, maximum: 2592000, default: 0},
-    retentionSeconds: {type: 'integer', minimum: 300, maximum: 31536000, default: 604800}}},
+    {rule: '!has(self.scheduleSeconds) || self.scheduleSeconds == 0 || (self.scheduleSeconds >= 300 && (!has(self.retentionSeconds) || self.retentionSeconds >= self.scheduleSeconds))', message: 'Schedule must be at least five minutes and fit retention'}], properties: {
+    historySeconds: {type: 'integer', minimum: 0, maximum: 2592000},
+    scheduleSeconds: {type: 'integer', minimum: 0, maximum: 2592000},
+    retentionSeconds: {type: 'integer', minimum: 300, maximum: 31536000}}},
   branchFrom: {type: 'object', required: ['database'], properties: {
     database: {type: 'string', pattern: '^[a-z][a-z0-9-]{0,38}$'},
     backup: {type: 'string', pattern: '^[a-z][a-z0-9-]{0,38}$'},
@@ -188,8 +189,8 @@ const databaseSchema = {type: 'object', required: ['size', 'tier'], properties: 
   profile: {type: 'string', enum: ['durable', 'bounded-async'], default: 'durable'},
   shards: {type: 'integer', enum: [1, 2, 4, 8, 16, 32], default: 1},
   allowedIps: {type: 'array', maxItems: 100, minItems: 1, items: {type: 'string', maxLength: 64}},
-  suspend: {type: 'object', default: {mode: 'idle', idleSeconds: 300}, properties: {
-    mode: {type: 'string', enum: ['idle', 'never'], default: 'idle'}, idleSeconds: {type: 'integer', minimum: 1, maximum: 604800, default: 300}}},
+  suspend: {type: 'object', properties: {
+    mode: {type: 'string', enum: ['idle', 'never']}, idleSeconds: {type: 'integer', minimum: 1, maximum: 604800}}},
   databasePolicies: {type: 'object', additionalProperties: {type: 'object', properties: {
     mode: {type: 'string', enum: ['idle', 'never']}, idleSeconds: {type: 'integer', minimum: 1, maximum: 604800}}}}
 }, 'x-kubernetes-validations': [
@@ -241,8 +242,8 @@ output('../kubernetes/keda/controller-patch.yaml', {apiVersion: 'apps/v1', kind:
   containers: [{name: 'controller', env: [{name: 'NEON_DATABASE_API', value: 'true'}, {name: 'NEON_PLATFORM', value: 'kubernetes'},
     {name: 'NEON_FLEET_SCALE_TO_ZERO', value: 'true'},
     {name: 'NEON_STATE', value: '/tmp/provision-state'}], ports: [{name: 'keda', containerPort: 9091}],
-    volumeMounts: [mount('management', '/run/management'), mount('trust', '/run/trust'), mount('bootstrap-ready', '/run/bootstrap-ready')]}],
-  volumes: [secretVol('management', 'neon-management-auth'), secretVol('trust', 'neon-service-ca'),
+    volumeMounts: [mount('management', '/run/management'), mount('bootstrap-ready', '/run/bootstrap-ready')]}],
+  volumes: [secretVol('management', 'neon-management-auth'),
     {name: 'bootstrap-ready', secret: {secretName: 'neon-bootstrap-state', items: [{key: 'identity.json', path: 'identity.json'}]}}]
 }}}});
 output('../kubernetes/keda/init-patch.yaml', {apiVersion: 'batch/v1', kind: 'Job', metadata: {name: 'neon-init', namespace: ns}, spec: {template: {spec: {
@@ -291,3 +292,11 @@ output('../kubernetes/examples/fleet.yaml', {apiVersion: 'neon.klustr.io/v1alpha
   replication: {scope: 'availability-zones', zones: ['zone-a', 'zone-b', 'zone-c'], mode: 'synchronous-quorum', safekeepers: 3},
   defaults: {size: 'small', tier: 'standard', suspend: {mode: 'idle', idleSeconds: 300}, backup: {historySeconds: 604800, scheduleSeconds: 0, retentionSeconds: 604800}}
 }});
+
+// Runtime consumes real Kustomize output; it never reimplements strategic merge.
+const stack = execFileSync('kubectl', ['kustomize', fs.realpathSync(path.resolve(root, '../kubernetes/keda'))], {encoding: 'utf8', maxBuffer: 8 * 1024 * 1024});
+const resources = parseAllDocuments(stack).map(document => {
+  if (document.errors.length) throw document.errors[0];
+  return document.toJS();
+}).filter(resource => resource && !['Namespace', 'CustomResourceDefinition'].includes(resource.kind));
+fs.writeFileSync(path.resolve(root, '../kubernetes/fleet-stack.json'), JSON.stringify({resources}, null, 2) + '\n');

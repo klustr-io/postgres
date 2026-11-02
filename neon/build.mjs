@@ -89,6 +89,16 @@ try{
     '--build-arg','SOURCE_REVISION='+record.base_commit,
     '--build-arg','RUST_CACHE_NAMESPACE='+(process.env.NEON_RUST_CACHE_NAMESPACE||'neon-monorepo'),
     '--file',path.join(context,'neon/packaging/docker/neon/Dockerfile')];
+  if(process.argv.includes('--verify-native-oauth')){
+    const artifactTag='klustr-neon-artifacts:oauth-'+record.source_digest.slice(0,12);
+    build('oauth-artifacts',[...sourceArgs,'--target','artifacts','--load','--tag',artifactTag,context]);
+    const report=path.join(output,'native-oauth.json');
+    const fd=fs.openSync(path.join(output,'native-oauth.log'),'w');
+    try{run(process.execPath,['neon/tests/neon/identity/native-oauth.mjs'],{
+      env:{...process.env,NEON_OAUTH_ARTIFACT_IMAGE:artifactTag,NEON_OAUTH_REPORT_FILE:report},stdio:['ignore',fd,fd]});}
+    finally{fs.closeSync(fd);}
+    record.native_oauth=read(report);assert.equal(record.native_oauth.passed,true);save();
+  }
   for(const role of ['compute','pageserver','safekeeper','storage-controller','storage-broker','proxy']){
     const tag=`klustr-neon-${role}:${version}`;
     build(role,[...sourceArgs,'--target',role,'--load','--tag',tag,context]);

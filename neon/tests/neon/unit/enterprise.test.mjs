@@ -1,9 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {generateKeyPairSync, sign} from 'node:crypto';
-import {Identity} from '../../../controller/tenant-compute/deploy/identity.mjs';
-import {DatabaseCredentials} from '../../../controller/tenant-compute/deploy/database-credentials.mjs';
-import {fleetResources, validateFleet} from '../../../controller/tenant-compute/deploy/enterprise-fleet.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {Identity} from '../../../controller/tenant-compute/src/infrastructure/identity/Identity.mjs';
+import {DatabaseCredentials} from '../../../controller/tenant-compute/src/application/identity/DatabaseCredentials.mjs';
+import {PostgresLoginRoles} from '../../../controller/tenant-compute/src/infrastructure/postgres/PostgresLoginRoles.mjs';
+import {FleetResources as fleetResources} from '../../../controller/tenant-compute/src/infrastructure/provisioning/FleetResources.mjs';
+import {ValidateFleet} from '../../../controller/tenant-compute/src/domain/fleet/FleetSpecification.mjs';
 const keys = generateKeyPairSync('rsa', {modulusLength: 2048});
 const jwk = {...keys.publicKey.export({format: 'jwk'}), kid: 'one', alg: 'RS256', use: 'sig'};
 const config = {issuer: 'https://identity.example', jwksUrl: 'https://identity.example/keys', management: {audience: 'fleet-api', roleBindings: [{group: 'admins', role: 'fleet-admin'}, {group: 'viewers', role: 'viewer'}]},
@@ -38,7 +43,7 @@ test('Unknown rotated signing keys refresh after the bounded refetch interval', 
 });
 test('Rejected database identity cannot trigger compute or storage wake', async () => {
   let wakes = 0;
-  const broker = new DatabaseCredentials({databases: {assertAvailable: async () => ({}), beginConnection: () => {wakes++;}},
+  const broker = new DatabaseCredentials({requireDatabase: async () => ({}), beginConnection: () => {wakes++;},
     identity: {authenticate: async () => {throw Object.assign(Error('denied'), {status: 403});}}});
   await assert.rejects(broker.exchange({}, 'main', {role: 'app_writer'}), {status: 403}); assert.equal(wakes, 0);
 });
@@ -70,7 +75,7 @@ test('Missing physical zones and attempted storage identity changes fail before 
   assert.throws(() => fleetResources(resource, {...opts, nodes: opts.nodes.slice(0, 1)}), /each configured physical zone/);
   const plan = fleetResources(resource, opts); resource.status = {storageIdentity: plan.storageIdentity}; resource.spec.domain = 'different.example';
   assert.throws(() => fleetResources(resource, opts), /explicit migration/);
-  resource.spec.replication.zones = ['a', 'a', 'a']; assert.throws(() => validateFleet(resource), /distinct zones/);
+  resource.spec.replication.zones = ['a', 'a', 'a']; assert.throws(() => ValidateFleet(resource), /distinct zones/);
 });
 test('External metadata plans remove the local database and use only the configured Secret DSN', () => {
   const resource = fleet(); resource.spec.storage.metadataDatabaseSecretRef = 'metadata-ha';
@@ -80,4 +85,77 @@ test('External metadata plans remove the local database and use only the configu
   const command = row.spec.template.spec.containers[0].command.join(' ');
   assert(command.includes('--database-url "$(cat /run/external-metadata/url)" --public-key='));
   assert(!command.includes('@metadata:5432'));
+});
+
+test('Fleet introspection projects separate management and database Secret credentials into the controller', () => {
+  const resource = fleet(); resource.spec.identity = structuredClone(config);
+  for (const kind of ['management', 'database']) resource.spec.identity[kind].tokenValidation = {
+    mode: 'introspection', endpoint: 'https://identity.example/introspect', clientId: kind+'-resource', clientSecretRef: kind+'-introspection', clientSecretKey: 'credential'};
+  const plan = fleetResources(resource, options()), pod = plan.resources.find(row => row.kind === 'Deployment' && row.metadata.name === 'neon-tenant-controller').spec.template.spec;
+  for (const kind of ['management', 'database']) {
+    const volume = pod.volumes.find(row => row.name === 'oidc-introspection-'+kind);
+    assert.equal(volume.secret.secretName, kind+'-introspection'); assert.equal(volume.secret.defaultMode, 288);
+    assert.deepEqual(volume.secret.items, [{key: 'credential', path: 'client-secret'}]);
+    assert(pod.containers[0].volumeMounts.some(row => row.name === volume.name && row.mountPath === '/run/oidc-introspection/'+kind && row.readOnly));
+  }
+});
+
+test('Fleet and cluster boundaries reject malformed DNS domains before provisioning', () => {
+  for (const domain of ['..', '.db.example', 'db..example', 'db.example.', '-db.example', 'db-.example', 'a'.repeat(64) + '.example', 'https://db.example']) {
+    const resource = fleet(); resource.spec.domain = domain;
+    assert.throws(() => fleetResources(resource, options()), /identity\/domain/);
+  }
+});
+
+test('Fleet runtime consumes the packaged compute image and rejects inconsistent release inputs', t => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'neon-release-contract-'));
+  t.after(() => {
+    assert(path.dirname(folder) === os.tmpdir() && path.basename(folder).startsWith('neon-release-contract-'));
+    fs.rmSync(folder, {recursive: true});
+  });
+  const bundle = path.join(folder, 'fleet-stack.json');
+  const stack = JSON.parse(fs.readFileSync(path.join(options().templates, 'fleet-stack.json'), 'utf8'));
+  const previous = fleetResources(fleet(), options()).config.computeImage;
+  const next = 'ghcr.io/klustr-io/neon-compute@sha256:' + 'b'.repeat(64);
+  const cluster = stack.resources.find(row => row.kind === 'ConfigMap' && row.metadata.name === 'neon-cluster');
+  cluster.data['cluster.yaml'] = cluster.data['cluster.yaml'].replaceAll(previous, next);
+  fs.writeFileSync(bundle, JSON.stringify(stack));
+  assert.throws(() => fleetResources(fleet(), {...options(), templates: folder}), /images disagree/);
+  const metadata = stack.resources.find(row => row.kind === 'StatefulSet' && row.metadata.name === 'metadata');
+  metadata.spec.template.spec.containers[0].image = next;
+  fs.writeFileSync(bundle, JSON.stringify(stack));
+  assert.equal(fleetResources(fleet(), {...options(), templates: folder}).config.computeImage, next);
+});
+
+test('OIDC credential issuance preserves issuer/subject and SQL login correlation without logging secrets', async () => {
+  const db = {metadata: {name: 'main', uid: 'db-uid'}, spec: {identity: {tenant: 'acme', project: 'billing'}}};
+  const endpoint = {databaseResource: 'main', uid: 'endpoint-uid', endpointId: 'ep-main'};
+  const actor = {issuer: config.issuer, subject: 'customer-actor', expires: Math.floor(Date.now() / 1000) + 300, config};
+  let secret, event;
+  const client = {query: async sql => ({rows: [sql.includes('AS unsafe') ? {unsafe: false} : {rolname: 'app_writer'}]}), end: async () => {}};
+  const broker = new DatabaseCredentials({
+    api: {get: async () => db, list: async () => [], create: async (_, value) => {secret = value;}}, leader: {require() {}},
+    requireDatabase: async () => db, beginConnection: () => () => {}, recordEvent: async () => {}, connectionPolicy: () => ({domain: 'db.example'}),
+    ensureStorageActive: async () => {}, rolesForClient: client => new PostgresLoginRoles({client, emit() {}}),
+    identity: {authenticate: async () => actor, database: async () => actor},
+    lifecycle: {wake: async () => {}, serialized: async (_, run) => run(), pods: async () => [{}], ready: () => true, admin: async () => client},
+    getEndpoints: () => new Map([['main', endpoint]]), emit: (name, fields) => {event = {name, ...fields};}
+  });
+  const login = await broker.exchange({}, 'main', {role: 'app_writer'}), stored = JSON.parse(secret.stringData.login);
+  assert.equal(stored.issuer, config.issuer); assert.equal(stored.subject, actor.subject);
+  assert.equal(stored.user, login.user); assert.equal(event.user, login.user);
+  assert.equal(event.credentialId, stored.credentialId); assert.equal(event.issuer, stored.issuer);
+  assert.equal(event.databaseUID, db.metadata.uid);
+  assert(!JSON.stringify(event).includes(login.password)); assert(!JSON.stringify(event).includes(stored.verifier));
+});
+
+test('Fleet settings accept explicit native OAuth and reject malformed database scopes', () => {
+  const resource = fleet();
+  resource.spec.identity = structuredClone(config);
+  resource.spec.identity.database.oauth = {enabled: true, scope: 'postgres:connect', scopeClaim: 'scope'};
+  const plan = fleetResources(resource, options());
+  assert.equal(plan.config.identity.database.oauth.enabled, true);
+  assert.equal(plan.config.identity.database.oauth.scope, 'postgres:connect');
+  resource.spec.identity.database.oauth.scope = 'postgres:connect\ninvalid';
+  assert.throws(() => ValidateFleet(resource), /OAuth scope/);
 });

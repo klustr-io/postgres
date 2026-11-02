@@ -38,6 +38,19 @@ pub enum ControlPlaneClient {
 }
 
 impl ControlPlaneApi for ControlPlaneClient {
+    async fn authorize_oauth(
+        &self,
+        ctx: &RequestContext,
+        endpoint: &EndpointId,
+        role: &crate::types::RoleName,
+        token: &str,
+    ) -> Result<(), errors::GetAuthInfoError> {
+        match self {
+            Self::ProxyV1(api) => api.authorize_oauth(ctx, endpoint, role, token).await,
+            #[cfg(any(test, feature = "testing"))]
+            _ => Err(errors::GetAuthInfoError::BadSecret),
+        }
+    }
     async fn get_role_access_control(
         &self,
         ctx: &RequestContext,

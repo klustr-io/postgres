@@ -8,7 +8,7 @@ import {spawnSync} from 'node:child_process';
 import {randomUUID,randomBytes,pbkdf2Sync,createHmac,createHash} from 'node:crypto';
 import {localConfiguration,s3Configuration} from '../../shared/neon-qualification-config.mjs';
 import {controllerResources} from '../../../packaging/kubernetes/tenant-controller.mjs';
-import {endpointConfig,renderSpec} from '../../../controller/tenant-compute/config.mjs';
+import {EndpointConfig as endpointConfig,RenderComputeSpec as renderSpec} from '../../../controller/tenant-compute/src/domain/compute/ComputeSpecification.mjs';
 const docker=process.env.DOCKER||'docker',values=localConfiguration();
 const base=['--kubeconfig',values.NEON_K8S_KUBECONFIG,'--context',values.NEON_K8S_CONTEXT,'--request-timeout=30s'];
 assert(base.every(Boolean));assert(values.NEON_K8S_NODE_CONTAINER);

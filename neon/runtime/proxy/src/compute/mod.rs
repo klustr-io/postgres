@@ -128,6 +128,8 @@ pub(crate) type ScramKeys = postgres_client::config::ScramKeys<32>;
 
 #[derive(Clone)]
 pub enum Auth {
+    /// Native OAuth, forwarded only over backend TLS.
+    OAuthBearer(Vec<u8>),
     /// Only used during console-redirect.
     Password(Vec<u8>),
     /// Used by sql-over-http, ws, tcp.
@@ -179,6 +181,7 @@ impl AuthInfo {
                     Some(Auth::Scram(Box::new(auth_keys)))
                 }
                 ComputeCredentialKeys::JwtPayload(_) => None,
+                ComputeCredentialKeys::OAuthBearer(token) => Some(Auth::OAuthBearer(token)),
             },
             server_params: StartupMessageParams::default(),
             skip_db_user: false,
@@ -201,6 +204,7 @@ impl ConnectInfo {
 impl AuthInfo {
     fn enrich(&self, mut config: postgres_client::Config) -> postgres_client::Config {
         match &self.auth {
+            Some(Auth::OAuthBearer(token)) => config.oauth_token(token).ssl_mode(SslMode::Require),
             Some(Auth::Scram(keys)) => config.auth_keys(AuthKeys::ScramSha256(**keys)),
             Some(Auth::Password(pw)) => config.password(pw),
             None => &mut config,

@@ -252,6 +252,8 @@ pub(crate) struct UserFacingMessage {
 #[derive(Deserialize)]
 pub(crate) struct GetEndpointAccessControl {
     pub(crate) role_secret: Box<str>,
+    #[serde(default)]
+    pub(crate) oauth: Option<super::OAuthConfig>,
 
     pub(crate) project_id: Option<ProjectIdInt>,
     pub(crate) account_id: Option<AccountIdInt>,

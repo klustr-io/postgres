@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {configuration, normalizeConfiguration} from '../../../controller/tenant-compute/deploy/config.mjs';
-import {specRouting} from '../../../controller/tenant-compute/deploy/routing.mjs';
-import {endpointConfig} from '../../../controller/tenant-compute/config.mjs';
-import {Lifecycle} from '../../../controller/tenant-compute/lifecycle.mjs';
+import {ConfigurationFile as configuration} from '../../../controller/tenant-compute/src/infrastructure/configuration/ConfigurationFile.mjs';
+import {NormalizeClusterConfiguration as normalizeConfiguration} from '../../../controller/tenant-compute/src/domain/configuration/ClusterConfiguration.mjs';
+import {SpecRouting as specRouting} from '../../../controller/tenant-compute/src/infrastructure/storage/StorageRouting.mjs';
+import {EndpointConfig as endpointConfig} from '../../../controller/tenant-compute/src/domain/compute/ComputeSpecification.mjs';
+import {Lifecycle} from '../../../controller/tenant-compute/src/infrastructure/compute/Lifecycle.mjs';
 
 test('Deployment config uses stable tenant identities and accepts normal SQL role names', () => {
   const base = configuration('neon/packaging/compose/config/cluster.yaml');

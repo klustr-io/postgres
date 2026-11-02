@@ -172,6 +172,7 @@ pub(crate) async fn validate_password_and_exchange(
     secret: AuthSecret,
 ) -> super::Result<sasl::Outcome<ComputeCredentialKeys>> {
     match secret {
+        AuthSecret::OAuth(_) => Err(AuthError::bad_auth_method("native OAuth requires SASL")),
         // perform scram authentication as both client and server to validate the keys
         AuthSecret::Scram(scram_secret) => {
             let outcome =

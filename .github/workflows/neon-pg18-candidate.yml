@@ -26,19 +26,16 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24.19.0'
-      - name: Install controller dependencies
-        run: npm ci --prefix neon/controller/tenant-compute --ignore-scripts --no-audit --no-fund
-      - name: Focused controller and storage-health checks
-        run: node --test neon/tests/neon/unit/*.test.mjs
+      - uses: ./.github/actions/neon-controller-check
       - name: Build entry point syntax
         run: |
           node --check neon/build.mjs
           node --check neon/publish.mjs
-          node --check neon/controller/tenant-compute/deploy/bootstrap.mjs
-          node --check neon/controller/tenant-compute/deploy/compose.mjs
-          node --check neon/controller/tenant-compute/deploy/databases.mjs
-          node --check neon/controller/tenant-compute/deploy/fleet.mjs
-          node --check neon/controller/tenant-compute/keda/scaler.mjs
+          node --check neon/controller/tenant-compute/src/infrastructure/provisioning/TenantProvisioning.mjs
+          node --check neon/controller/tenant-compute/src/infrastructure/compose/ComposeRuntime.mjs
+          node --check neon/controller/tenant-compute/src/application/database/Databases.mjs
+          node --check neon/controller/tenant-compute/src/application/storage/StorageFleet.mjs
+          node --check neon/controller/tenant-compute/src/infrastructure/keda/KedaScaler.mjs
           node --check neon/packaging/deploy/render.mjs
   build:
     if: github.event_name != 'pull_request'
@@ -94,7 +91,9 @@ jobs:
       - name: Compile all seven images and run basic image checks
         env:
           IMAGE_VERSION: ${{ steps.version.outputs.value }}
-        run: node neon/build.mjs --version="$IMAGE_VERSION"
+        run: |
+          npm ci --prefix neon/controller/tenant-compute --ignore-scripts --no-audit --no-fund
+          node neon/build.mjs --version="$IMAGE_VERSION" --verify-native-oauth
       - name: Upload OCI images, source receipt and logs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
