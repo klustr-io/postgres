@@ -6,9 +6,9 @@ size/tier changes, demand webhooks, compute suspension and shared-storage suspen
 Applications use normal PostgreSQL connections, SQL and JSONB.
 
 **These controller changes are newer than RC5.** Deployment YAML pins the public
-controller image built from commit `1d895c7dcc2fb31e9dc480cf8cd9bd385a55532c`;
+controller image built from commit `53ad969a448c0cc97565210e8c82f708b301dea0`;
 other runtime images are pinned to RC5 digests. This is an integration candidate,
-not a production HA certification. [Controller build and publication](https://github.com/klustr-io/postgres/actions/runs/41304715810).
+not a production HA certification. [Controller build and publication](https://github.com/klustr-io/postgres/actions/runs/41381516637).
 
 ## Idle boundary and cost
 

@@ -14,7 +14,7 @@ const digests = {compute: 'f84df9577c542dbf3be8a789d301716f77c7d6ac5c79bfd519818
   'storage-broker': 'd2ee7433b77031d3bbaad7a4a6f61d3671307661d09de65e469296b77134dce6',
   proxy: '034e918af3ca73bb939fdb6d8b4b6c73dce35dcd433f048a35aca9b217194e24'};
 const image = role => `ghcr.io/klustr-io/neon-${role}@sha256:${digests[role]}`;
-const helper = 'ghcr.io/klustr-io/neon-tenant-controller@sha256:d65148743f95a2262d110525c7e5f23cebc6a2763e6620113a5d5f35affb1b54';
+const helper = 'ghcr.io/klustr-io/neon-tenant-controller@sha256:98fd4dde0fff823387022a81d58d593d67df9a4c463649a4cda9d8371afb5fdb';
 const shell = command => ['/bin/sh', '-ec', command];
 const pageserver = 'cat /run/neon/pageserver.toml > /var/lib/neon/pageserver.toml; printf "id=1\\n" > /var/lib/neon/identity.toml; export NEON_AUTH_TOKEN="$(cat /run/neon/safekeeper.jwt)"; exec /usr/local/bin/pageserver -D /var/lib/neon';
 const metadataCommand = 'if [ ! -f /var/lib/neon/metadata/PG_VERSION ]; then /opt/postgres/v18/bin/initdb -D /var/lib/neon/metadata -U neon --pwfile=/run/metadata/password --auth-host=scram-sha-256; fi; printf "local all all trust\n host postgres neon 0.0.0.0/0 scram-sha-256\n host postgres neon ::/0 scram-sha-256\n" > /var/lib/neon/metadata/pg_hba.conf; exec /opt/postgres/v18/bin/postgres -D /var/lib/neon/metadata -c listen_addresses=* -p 5432';
