@@ -3,14 +3,14 @@ use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use axum::Router;
 use axum::middleware::{self};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use compute_api::responses::ComputeCtlConfig;
 use http::StatusCode;
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpSocket};
 use tower::ServiceBuilder;
 use tower_http::{
     auth::AsyncRequireAuthorizationLayer, request_id::PropagateRequestIdLayer, trace::TraceLayer,
@@ -182,11 +182,21 @@ impl Server {
         StatusCode::METHOD_NOT_ALLOWED
     }
 
-    async fn listener(&self) -> Result<TcpListener> {
+    fn listener(&self) -> Result<TcpListener> {
         let addr = SocketAddr::new(self.ip(), self.port());
-        let listener = TcpListener::bind(&addr).await?;
-
-        Ok(listener)
+        // Bind before spawning a detached task: a task panic otherwise leaves
+        // Postgres running while readiness waits for a server that never bound.
+        let socket = if addr.is_ipv4() {
+            TcpSocket::new_v4()?
+        } else {
+            TcpSocket::new_v6()?
+        };
+        // Preserve Tokio's normal listener restart semantics.
+        #[cfg(unix)]
+        socket.set_reuseaddr(true)?;
+        socket.bind(addr)
+            .with_context(|| format!("failed to bind compute_ctl {self} HTTP server to {addr}"))?;
+        Ok(socket.listen(1024)?)
     }
 
     fn ip(&self) -> IpAddr {
@@ -205,17 +215,7 @@ impl Server {
         }
     }
 
-    async fn serve(self, compute: Arc<ComputeNode>) {
-        let listener = self.listener().await.unwrap_or_else(|e| {
-            // If we can't bind, the compute cannot operate correctly
-            panic!(
-                "failed to bind the compute_ctl {} HTTP server to {}: {}",
-                self,
-                SocketAddr::new(self.ip(), self.port()),
-                e
-            );
-        });
-
+    async fn serve(self, compute: Arc<ComputeNode>, listener: TcpListener) {
         if tracing::enabled!(tracing::Level::INFO) {
             let local_addr = match listener.local_addr() {
                 Ok(local_addr) => local_addr,
@@ -237,11 +237,43 @@ impl Server {
         }
     }
 
-    pub fn launch(self, compute: &Arc<ComputeNode>) {
+    pub fn launch(self, compute: &Arc<ComputeNode>) -> Result<()> {
+        let listener = self.listener()?;
         let state = Arc::clone(compute);
 
         info!("Launching the {} server", self);
 
-        tokio::spawn(self.serve(state));
+        tokio::spawn(self.serve(state, listener));
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn occupied_listener_returns_error_before_task_spawn() {
+        let occupied = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = occupied.local_addr().unwrap().port();
+        let error = Server::Internal { port }.listener().unwrap_err();
+        assert!(error.to_string().contains("failed to bind compute_ctl internal HTTP server"));
+        assert_eq!(error.downcast_ref::<std::io::Error>().unwrap().kind(), std::io::ErrorKind::AddrInUse);
+    }
+
+    #[tokio::test]
+    async fn successful_listener_accepts_connections() {
+        let listener = Server::Internal { port: 0 }.listener().unwrap();
+        let address = listener.local_addr().unwrap();
+        assert!(address.ip().is_loopback());
+        assert_ne!(address.port(), 0);
+        let (client, accepted) = tokio::join!(tokio::net::TcpStream::connect(address), listener.accept());
+        assert!(client.is_ok());
+        assert!(accepted.is_ok());
+        drop(accepted.unwrap());
+        tokio::task::yield_now().await;
+        drop(client.unwrap());
+        drop(listener);
+        assert!(Server::Internal { port: address.port() }.listener().is_ok());
     }
 }

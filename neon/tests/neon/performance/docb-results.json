@@ -1,0 +1,487 @@
+{
+    "recordedUtc":  "2026-11-04T13:40:35.0493295Z",
+    "status":  "bounded-screens-pass-not-production-qualified",
+    "workload":  {
+                     "documents":  64,
+                     "payload_bytes":  65536,
+                     "clients":  8,
+                     "transactions_per_sample":  1024,
+                     "total_cpu_limit":  8,
+                     "memory_limit_gib":  6
+                 },
+    "limitations":  [
+                        "RAM-backed, 64 documents, 64 KiB payload, eight total CPUs; not persistent-media IOPS or capacity testing",
+                        "Best-effort has weaker acknowledgement guarantees",
+                        "DOCB full bases are uncompressed; logical slots select full-value writes",
+                        "No DOCB OCIs published; persistent storage, cold S3 and multi-zone qualification remain"
+                    ],
+    "verification":  {
+                         "postgresRegressionTestsPassed":  231,
+                         "listenerUnitTestsPassed":  2,
+                         "changedControllerTestsPassed":  37,
+                         "controllerLint":  "PASS",
+                         "controllerArchitecture":  "PASS",
+                         "engineImage":  "klustr-neon-docb-engine:candidate"
+                     },
+    "groups":  {
+                   "native":  {
+                                  "status":  "PASS",
+                                  "engine":  "native",
+                                  "commitProfile":  "durable",
+                                  "settings":  {
+                                                   "fsync":  "on",
+                                                   "full_page_writes":  "on",
+                                                   "synchronous_commit":  "on",
+                                                   "synchronous_standby_names":  "",
+                                                   "wal_level":  "logical"
+                                               },
+                                  "results":  [
+                                                  {
+                                                      "type":  "jsonb",
+                                                      "gin":  false,
+                                                      "tps":  3928.0522,
+                                                      "updates":  1024,
+                                                      "wal_bytes":  83366104,
+                                                      "wal_bytes_per_update":  81412.2109375
+                                                  },
+                                                  {
+                                                      "type":  "docb",
+                                                      "gin":  false,
+                                                      "tps":  25855.974144,
+                                                      "updates":  1024,
+                                                      "wal_bytes":  1215112,
+                                                      "wal_bytes_per_update":  1186.6328125
+                                                  },
+                                                  {
+                                                      "type":  "docb",
+                                                      "gin":  false,
+                                                      "tps":  28836.135282,
+                                                      "updates":  1024,
+                                                      "wal_bytes":  1324880,
+                                                      "wal_bytes_per_update":  1293.828125
+                                                  },
+                                                  {
+                                                      "type":  "jsonb",
+                                                      "gin":  false,
+                                                      "tps":  3186.199772,
+                                                      "updates":  1024,
+                                                      "wal_bytes":  83391728,
+                                                      "wal_bytes_per_update":  81437.234375
+                                                  },
+                                                  {
+                                                      "type":  "jsonb",
+                                                      "gin":  true,
+                                                      "tps":  4060.253528,
+                                                      "updates":  1024,
+                                                      "wal_bytes":  83639528,
+                                                      "wal_bytes_per_update":  81679.2265625
+                                                  },
+                                                  {
+                                                      "type":  "docb",
+                                                      "gin":  true,
+                                                      "tps":  31074.560738,
+                                                      "updates":  1024,
+                                                      "wal_bytes":  1658400,
+                                                      "wal_bytes_per_update":  1619.53125
+                                                  },
+                                                  {
+                                                      "type":  "docb",
+                                                      "gin":  true,
+                                                      "tps":  25372.283753,
+                                                      "updates":  1024,
+                                                      "wal_bytes":  1655096,
+                                                      "wal_bytes_per_update":  1616.3046875
+                                                  },
+                                                  {
+                                                      "type":  "jsonb",
+                                                      "gin":  true,
+                                                      "tps":  3836.111142,
+                                                      "updates":  1024,
+                                                      "wal_bytes":  83911320,
+                                                      "wal_bytes_per_update":  81944.6484375
+                                                  }
+                                              ],
+                                  "projections":  [
+                                                      {
+                                                          "type":  "jsonb",
+                                                          "gin":  false,
+                                                          "execution_ms":  16.369,
+                                                          "buffer_hits":  23585,
+                                                          "buffer_reads":  0
+                                                      },
+                                                      {
+                                                          "type":  "docb",
+                                                          "gin":  false,
+                                                          "execution_ms":  3.844,
+                                                          "buffer_hits":  6170,
+                                                          "buffer_reads":  0
+                                                      },
+                                                      {
+                                                          "type":  "jsonb",
+                                                          "gin":  true,
+                                                          "execution_ms":  15.31,
+                                                          "buffer_hits":  23365,
+                                                          "buffer_reads":  3
+                                                      },
+                                                      {
+                                                          "type":  "docb",
+                                                          "gin":  true,
+                                                          "execution_ms":  4.047,
+                                                          "buffer_hits":  6180,
+                                                          "buffer_reads":  3
+                                                      }
+                                                  ],
+                                  "upstreamPostgresControl":  [
+                                                                  {
+                                                                      "type":  "jsonb",
+                                                                      "gin":  false,
+                                                                      "repetition":  1,
+                                                                      "tps":  3288.871474,
+                                                                      "wal_bytes_per_update":  81179.109375
+                                                                  },
+                                                                  {
+                                                                      "type":  "jsonb",
+                                                                      "gin":  false,
+                                                                      "repetition":  2,
+                                                                      "tps":  4106.446801,
+                                                                      "wal_bytes_per_update":  81349.71875
+                                                                  },
+                                                                  {
+                                                                      "type":  "jsonb",
+                                                                      "gin":  true,
+                                                                      "repetition":  1,
+                                                                      "tps":  3969.592303,
+                                                                      "wal_bytes_per_update":  81436.078125
+                                                                  },
+                                                                  {
+                                                                      "type":  "jsonb",
+                                                                      "gin":  true,
+                                                                      "repetition":  2,
+                                                                      "tps":  3887.003591,
+                                                                      "wal_bytes_per_update":  81858.109375
+                                                                  }
+                                                              ],
+                                  "wakeSamples":  [
+
+                                                  ],
+                                  "listenerBindFailureMs":  null,
+                                  "lengthChangingTailWalBytesPerUpdate":  2111.36,
+                                  "sourceSha256":  {
+                                                       "core":  "0b970f2b3bcd813afcb48752ee45964d1d0473396b5597537bc37768d638748f",
+                                                       "module":  "e545ea7642a36d1498f38d7e2b54849dd5f3a189a52ae390b8859a82999d4155",
+                                                       "extensionSql":  "93e655b10f44bf6f186c483912d655ca3581b2b6889c1023c4f516ce8f0d5565",
+                                                       "commitGuard":  "0eacf53fc1000351980ca9f0360bb082b41fe94254952dde26a97f51f02d34e9"
+                                                   },
+                                  "checks":  [
+                                                 "Canonical JSON text input and explicit JSONB casts",
+                                                 "B-tree, hash, GIN, JSONPath and existing JSON functions accept DOCB without literal ambiguity",
+                                                 "Selective paths match JSONB for objects, arrays, nulls, scalars and missing keys",
+                                                 "Wide metadata, length-changing edits, Unicode, arrays and added keys match JSONB",
+                                                 "Length-changing tail edits reuse the intervening 64 KiB payload; amortized WAL stays below 16 KiB/update",
+                                                 "Planner fuses ordinary operator chains while preserving object/array step semantics",
+                                                 "Delta updates, projection from deltas and consolidated base reuse",
+                                                 "Old snapshot and held cursor survive concurrent rebase, deletion and VACUUM",
+                                                 "Rollback/savepoints and cross-row/array copies survive source reclamation",
+                                                 "Binary COPY and CLUSTER/VACUUM FULL preserve values",
+                                                 "One-base consolidation, revert-to-base reuse, full rebase, freeze and final dependency reclamation",
+                                                 "Physical WAL replay reconstructs native delta records on a separate standby",
+                                                 "Immediate crash restart preserves committed roots and discards uncommitted deltas",
+                                                 "Logical slot creation fences writers; CDC emits full JSON after VACUUM; dropping slot restores deltas"
+                                             ]
+                              },
+                   "quorum":  {
+                                  "status":  "PASS",
+                                  "engine":  "neon",
+                                  "commitProfile":  "durable",
+                                  "settings":  {
+                                                   "fsync":  "on",
+                                                   "full_page_writes":  "on",
+                                                   "neon.best_effort_commit":  "off",
+                                                   "neon.bounded_async_commit":  "off",
+                                                   "synchronous_commit":  "on",
+                                                   "synchronous_standby_names":  "walproposer",
+                                                   "wal_level":  "logical"
+                                               },
+                                  "results":  [
+                                                  {
+                                                      "type":  "jsonb",
+                                                      "gin":  false,
+                                                      "tps":  1830.375656,
+                                                      "updates":  1024,
+                                                      "wal_bytes":  83537160,
+                                                      "wal_bytes_per_update":  81579.2578125
+                                                  },
+                                                  {
+                                                      "type":  "docb",
+                                                      "gin":  false,
+                                                      "tps":  6967.313502,
+                                                      "updates":  1024,
+                                                      "wal_bytes":  1215704,
+                                                      "wal_bytes_per_update":  1187.2109375
+                                                  },
+                                                  {
+                                                      "type":  "docb",
+                                                      "gin":  false,
+                                                      "tps":  9085.90797,
+                                                      "updates":  1024,
+                                                      "wal_bytes":  1305216,
+                                                      "wal_bytes_per_update":  1274.625
+                                                  },
+                                                  {
+                                                      "type":  "jsonb",
+                                                      "gin":  false,
+                                                      "tps":  1765.304187,
+                                                      "updates":  1024,
+                                                      "wal_bytes":  83681584,
+                                                      "wal_bytes_per_update":  81720.296875
+                                                  },
+                                                  {
+                                                      "type":  "jsonb",
+                                                      "gin":  true,
+                                                      "tps":  1652.764507,
+                                                      "updates":  1024,
+                                                      "wal_bytes":  83839816,
+                                                      "wal_bytes_per_update":  81874.8203125
+                                                  },
+                                                  {
+                                                      "type":  "docb",
+                                                      "gin":  true,
+                                                      "tps":  10104.498673,
+                                                      "updates":  1024,
+                                                      "wal_bytes":  1663296,
+                                                      "wal_bytes_per_update":  1624.3125
+                                                  },
+                                                  {
+                                                      "type":  "docb",
+                                                      "gin":  true,
+                                                      "tps":  9256.162489,
+                                                      "updates":  1024,
+                                                      "wal_bytes":  1682248,
+                                                      "wal_bytes_per_update":  1642.8203125
+                                                  },
+                                                  {
+                                                      "type":  "jsonb",
+                                                      "gin":  true,
+                                                      "tps":  1756.965665,
+                                                      "updates":  1024,
+                                                      "wal_bytes":  84196968,
+                                                      "wal_bytes_per_update":  82223.6015625
+                                                  }
+                                              ],
+                                  "projections":  [
+                                                      {
+                                                          "type":  "jsonb",
+                                                          "gin":  false,
+                                                          "execution_ms":  18.015,
+                                                          "buffer_hits":  23642,
+                                                          "buffer_reads":  0
+                                                      },
+                                                      {
+                                                          "type":  "docb",
+                                                          "gin":  false,
+                                                          "execution_ms":  3.689,
+                                                          "buffer_hits":  6206,
+                                                          "buffer_reads":  0
+                                                      },
+                                                      {
+                                                          "type":  "jsonb",
+                                                          "gin":  true,
+                                                          "execution_ms":  16.414,
+                                                          "buffer_hits":  25536,
+                                                          "buffer_reads":  2
+                                                      },
+                                                      {
+                                                          "type":  "docb",
+                                                          "gin":  true,
+                                                          "execution_ms":  5.951,
+                                                          "buffer_hits":  6201,
+                                                          "buffer_reads":  5
+                                                      }
+                                                  ],
+                                  "upstreamPostgresControl":  [
+
+                                                              ],
+                                  "wakeSamples":  [
+                                                      {
+                                                          "endpoint":  "wake",
+                                                          "startup_ms":  209.92681803181767
+                                                      }
+                                                  ],
+                                  "listenerBindFailureMs":  2045.5611840006895,
+                                  "lengthChangingTailWalBytesPerUpdate":  1472,
+                                  "sourceSha256":  {
+                                                       "core":  "0b970f2b3bcd813afcb48752ee45964d1d0473396b5597537bc37768d638748f",
+                                                       "module":  "e545ea7642a36d1498f38d7e2b54849dd5f3a189a52ae390b8859a82999d4155",
+                                                       "extensionSql":  "93e655b10f44bf6f186c483912d655ca3581b2b6889c1023c4f516ce8f0d5565",
+                                                       "commitGuard":  "0eacf53fc1000351980ca9f0360bb082b41fe94254952dde26a97f51f02d34e9"
+                                                   },
+                                  "checks":  [
+                                                 "Occupied control port fails startup before PostgreSQL rather than hanging readiness",
+                                                 "Canonical JSON text input and explicit JSONB casts",
+                                                 "B-tree, hash, GIN, JSONPath and existing JSON functions accept DOCB without literal ambiguity",
+                                                 "Selective paths match JSONB for objects, arrays, nulls, scalars and missing keys",
+                                                 "Wide metadata, length-changing edits, Unicode, arrays and added keys match JSONB",
+                                                 "Length-changing tail edits reuse the intervening 64 KiB payload; amortized WAL stays below 16 KiB/update",
+                                                 "Planner fuses ordinary operator chains while preserving object/array step semantics",
+                                                 "Delta updates, projection from deltas and consolidated base reuse",
+                                                 "Old snapshot and held cursor survive concurrent rebase, deletion and VACUUM",
+                                                 "Rollback/savepoints and cross-row/array copies survive source reclamation",
+                                                 "Binary COPY and CLUSTER/VACUUM FULL preserve values",
+                                                 "One-base consolidation, revert-to-base reuse, full rebase, freeze and final dependency reclamation",
+                                                 "Logical slot creation fences writers; CDC emits full JSON after VACUUM; dropping slot restores deltas",
+                                                 "A fresh compute wakes a Neon branch; parent/branch updates and base reclamation remain isolated"
+                                             ]
+                              },
+                   "best-effort":  {
+                                       "status":  "PASS",
+                                       "engine":  "neon",
+                                       "commitProfile":  "best-effort",
+                                       "settings":  {
+                                                        "fsync":  "off",
+                                                        "full_page_writes":  "on",
+                                                        "neon.best_effort_commit":  "on",
+                                                        "neon.bounded_async_commit":  "on",
+                                                        "synchronous_commit":  "off",
+                                                        "synchronous_standby_names":  "walproposer",
+                                                        "wal_level":  "logical"
+                                                    },
+                                       "results":  [
+                                                       {
+                                                           "type":  "jsonb",
+                                                           "gin":  false,
+                                                           "tps":  1992.512512,
+                                                           "updates":  1024,
+                                                           "wal_bytes":  83829016,
+                                                           "wal_bytes_per_update":  81864.2734375
+                                                       },
+                                                       {
+                                                           "type":  "docb",
+                                                           "gin":  false,
+                                                           "tps":  24004.87599,
+                                                           "updates":  1024,
+                                                           "wal_bytes":  1215456,
+                                                           "wal_bytes_per_update":  1186.96875
+                                                       },
+                                                       {
+                                                           "type":  "docb",
+                                                           "gin":  false,
+                                                           "tps":  22460.573359,
+                                                           "updates":  1024,
+                                                           "wal_bytes":  1331552,
+                                                           "wal_bytes_per_update":  1300.34375
+                                                       },
+                                                       {
+                                                           "type":  "jsonb",
+                                                           "gin":  false,
+                                                           "tps":  2016.101246,
+                                                           "updates":  1024,
+                                                           "wal_bytes":  83611320,
+                                                           "wal_bytes_per_update":  81651.6796875
+                                                       },
+                                                       {
+                                                           "type":  "jsonb",
+                                                           "gin":  true,
+                                                           "tps":  1986.663744,
+                                                           "updates":  1024,
+                                                           "wal_bytes":  84151968,
+                                                           "wal_bytes_per_update":  82179.65625
+                                                       },
+                                                       {
+                                                           "type":  "docb",
+                                                           "gin":  true,
+                                                           "tps":  12525.227815,
+                                                           "updates":  1024,
+                                                           "wal_bytes":  1683816,
+                                                           "wal_bytes_per_update":  1644.3515625
+                                                       },
+                                                       {
+                                                           "type":  "docb",
+                                                           "gin":  true,
+                                                           "tps":  17218.476232,
+                                                           "updates":  1024,
+                                                           "wal_bytes":  1730400,
+                                                           "wal_bytes_per_update":  1689.84375
+                                                       },
+                                                       {
+                                                           "type":  "jsonb",
+                                                           "gin":  true,
+                                                           "tps":  1532.706979,
+                                                           "updates":  1024,
+                                                           "wal_bytes":  84295624,
+                                                           "wal_bytes_per_update":  82319.9453125
+                                                       }
+                                                   ],
+                                       "projections":  [
+                                                           {
+                                                               "type":  "jsonb",
+                                                               "gin":  false,
+                                                               "execution_ms":  28.136,
+                                                               "buffer_hits":  23260,
+                                                               "buffer_reads":  0
+                                                           },
+                                                           {
+                                                               "type":  "docb",
+                                                               "gin":  false,
+                                                               "execution_ms":  5.995,
+                                                               "buffer_hits":  6212,
+                                                               "buffer_reads":  0
+                                                           },
+                                                           {
+                                                               "type":  "jsonb",
+                                                               "gin":  true,
+                                                               "execution_ms":  21.964,
+                                                               "buffer_hits":  23299,
+                                                               "buffer_reads":  1
+                                                           },
+                                                           {
+                                                               "type":  "docb",
+                                                               "gin":  true,
+                                                               "execution_ms":  7.807,
+                                                               "buffer_hits":  6207,
+                                                               "buffer_reads":  5
+                                                           }
+                                                       ],
+                                       "upstreamPostgresControl":  [
+
+                                                                   ],
+                                       "wakeSamples":  [
+                                                           {
+                                                               "endpoint":  "wake",
+                                                               "startup_ms":  215.43075900990516
+                                                           },
+                                                           {
+                                                               "endpoint":  "wake2",
+                                                               "startup_ms":  212.4441530322656
+                                                           },
+                                                           {
+                                                               "endpoint":  "wake3",
+                                                               "startup_ms":  214.39172298414633
+                                                           }
+                                                       ],
+                                       "listenerBindFailureMs":  2044.8627520236187,
+                                       "lengthChangingTailWalBytesPerUpdate":  1472,
+                                       "sourceSha256":  {
+                                                            "core":  "0b970f2b3bcd813afcb48752ee45964d1d0473396b5597537bc37768d638748f",
+                                                            "module":  "e545ea7642a36d1498f38d7e2b54849dd5f3a189a52ae390b8859a82999d4155",
+                                                            "extensionSql":  "93e655b10f44bf6f186c483912d655ca3581b2b6889c1023c4f516ce8f0d5565",
+                                                            "commitGuard":  "0eacf53fc1000351980ca9f0360bb082b41fe94254952dde26a97f51f02d34e9"
+                                                        },
+                                       "checks":  [
+                                                      "Occupied control port fails startup before PostgreSQL rather than hanging readiness",
+                                                      "Canonical JSON text input and explicit JSONB casts",
+                                                      "B-tree, hash, GIN, JSONPath and existing JSON functions accept DOCB without literal ambiguity",
+                                                      "Selective paths match JSONB for objects, arrays, nulls, scalars and missing keys",
+                                                      "Wide metadata, length-changing edits, Unicode, arrays and added keys match JSONB",
+                                                      "Length-changing tail edits reuse the intervening 64 KiB payload; amortized WAL stays below 16 KiB/update",
+                                                      "Planner fuses ordinary operator chains while preserving object/array step semantics",
+                                                      "Delta updates, projection from deltas and consolidated base reuse",
+                                                      "Old snapshot and held cursor survive concurrent rebase, deletion and VACUUM",
+                                                      "Rollback/savepoints and cross-row/array copies survive source reclamation",
+                                                      "Binary COPY and CLUSTER/VACUUM FULL preserve values",
+                                                      "One-base consolidation, revert-to-base reuse, full rebase, freeze and final dependency reclamation",
+                                                      "Logical slot creation fences writers; CDC emits full JSON after VACUUM; dropping slot restores deltas",
+                                                      "A fresh compute wakes a Neon branch; parent/branch updates and base reclamation remain isolated"
+                                                  ]
+                                   }
+               }
+}

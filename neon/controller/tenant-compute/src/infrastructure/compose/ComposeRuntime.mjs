@@ -129,7 +129,8 @@ class ComposeLifecycle extends Lifecycle {
       try {
         client = await this.client(endpoint);
         const row = (await client.query("SELECT current_setting('server_version_num')::int AS version, pg_is_in_recovery() AS recovery, neon.bounded_commit_guard_status()::json AS guard")).rows[0];
-        if (row.version < 180000 || row.version >= 190000 || row.recovery || !row.guard.enabled || !row.guard.quorum_available) return false;
+        if (row.version < 180000 || row.version >= 190000 || row.recovery || !row.guard.enabled || !row.guard.quorum_available ||
+            Boolean(row.guard.best_effort) !== (endpoint.profile === 'best-effort')) return false;
         if (endpoint.status.drainedLSN && !(await client.query('SELECT pg_current_wal_insert_lsn() >= $1::pg_lsn AS recovered', [endpoint.status.drainedLSN])).rows[0].recovered) return false;
         return true;
       } catch {return false;} finally {if (client) await client.end();}

@@ -100,7 +100,7 @@ LABEL org.opencontainers.image.source="https://github.com/klustr-io/postgres" \
       io.klustr.release-status="single-checkout-source-candidate"
 FROM runtime AS compute
 LABEL io.klustr.native-oauth="OAUTHBEARER/klustr_oauth"
-LABEL io.klustr.postgresql-extensions="pg_stat_statements,anon,datasketches,vector,timescaledb,pg_textsearch"
+LABEL io.klustr.postgresql-extensions="pg_stat_statements,anon,datasketches,vector,timescaledb,pg_textsearch,docb"
 COPY --from=roots /rootfs/compute/ /
 EXPOSE 5432 3080
 ENTRYPOINT ["/usr/local/bin/compute_ctl"]

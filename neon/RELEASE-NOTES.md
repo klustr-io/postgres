@@ -1,3 +1,53 @@
+# Native DOCB documents - experimental source changeset
+
+Adds the opt-in `docb` base type through a packaged extension, with native immutable
+TOAST deltas, selective range reads, fused JSON operator chains and standard
+subscript assignment. Existing JSONB remains unchanged and no catalog-version bump
+is required. Native casts retain existing JSON function/literal resolution; GIN,
+B-tree and hash operator classes support normal indexing and comparison.
+
+Bounded local screens show roughly 5x write throughput and 50x less WAL on small
+updates to 64 KiB documents with synchronous Neon quorum commits. Current-value metadata
+caching removes a measured projection regression, while consolidated roots avoid
+replay chains and repeated full-document rebases.
+Focused checks cover MVCC, rollback, cross-row/array copying, held cursors, binary
+COPY, rewrites, native crash restart, physical replay and logical-slot fencing.
+Neon wake/branch checks use disposable local storage, without S3 or retained data.
+The normal engine build passed all 231 PostgreSQL regression tests. The latest
+GIN screen averaged 9,680 durable DOCB updates/sec against 1,705 Neon JSONB,
+with separate best-effort DOCB at 14,872 and unmodified PostgreSQL JSONB at 3,928.
+These are short RAM-backed measurements, not production capacity claims.
+
+Compute-control HTTP listeners now bind before spawning their serving tasks;
+bind failures propagate before PostgreSQL starts instead of leaving readiness
+waiting while the database runs. Two listener tests and an occupied-port
+integration check cover the failure. Diagnostic fixture ports avoid the Linux
+ephemeral client range, and subsequent durable branch/wake checks pass.
+
+CDC slots select full-value writes; compressible full values and large structural
+edits remain limitations. This is not a published OCI release or a production
+storage-format qualification. See [deployment and compatibility details](../DEPLOY.md#native-docb-documents-experimental).
+The [performance article](../blog.md) and
+[recorded benchmark summary](tests/neon/performance/docb-results.json) accompany
+the source changes. Local diagnostics and database fixtures are excluded.
+
+# Configurable commit loss tolerance - unpublished source changeset
+
+Database YAML/API and Compose support `durable`, `bounded-async` (roughly good),
+and explicit `best-effort` acknowledgements. Enterprise fleets permit the latter
+two only with `allowAsyncCommits: true`. The default remains durable quorum.
+Best effort bypasses remote admission bounds for asynchronous commits while
+preserving safekeeper disk flushing, explicitly synchronous transactions, and
+quorum drain before planned scale-to-zero. It has no time-bounded acknowledged
+loss guarantee. Wake verifies the requested runtime policy.
+
+A small RAM-backed eight-CPU-total comparison measured approximately 2x JSONB/GIN
+throughput and 3.5x WAL-only throughput over synchronous quorum. This changes
+acknowledgement guarantees; it is not a strict-durability speedup or production
+capacity qualification. Core C compilation, default-off API/privilege checks,
+quorum-pause/drain checks and focused controller tests passed. Coordinated OCI
+publication is still required. See [commit profiles](../DEPLOY.md#commit-profiles).
+
 # Statement telemetry and idle-aware collection - source changeset
 
 Managed compute preloads `pg_stat_statements` and enables it idempotently in

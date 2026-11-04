@@ -48,6 +48,9 @@ spec:
                   maxItems: 100
                   items:
                     type: string
+                allowAsyncCommits:
+                  type: boolean
+                  default: false
                 identity:
                   type: object
                   x-kubernetes-preserve-unknown-fields: true

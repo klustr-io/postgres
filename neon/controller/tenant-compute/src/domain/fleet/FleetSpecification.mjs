@@ -27,6 +27,7 @@ const SafeName = value => typeof value === 'string' && /^[a-z][a-z0-9-]{0,62}$/.
  * @property {FleetReplicationSpecification} replication - Physical replication policy.
  * @property {import('../database/DatabasePolicy.mjs').DatabaseDefaults} [defaults] - Inherited database defaults.
  * @property {string[]} [clientCIDRs] - Allowed client networks.
+ * @property {boolean} [allowAsyncCommits] - Allow databases to explicitly select loss-tolerant acknowledgement policies.
  */
 /**
  * @typedef {Object} FleetObservedState
@@ -58,7 +59,8 @@ const SafeName = value => typeof value === 'string' && /^[a-z][a-z0-9-]{0,62}$/.
 export function ValidateFleet(resource) {
   const spec = resource.spec;
   if (!SafeName(resource.metadata.name) || resource.metadata.name.length > 39 || !spec || !IsDnsDomain(spec.domain)) throw Error('Invalid fleet identity/domain');
-  if (Object.keys(spec).some(key => !['domain', 'identity', 'storage', 'replication', 'defaults', 'clientCIDRs'].includes(key))) throw Error('Unsupported fleet field');
+  if (Object.keys(spec).some(key => !['domain', 'identity', 'storage', 'replication', 'defaults', 'clientCIDRs', 'allowAsyncCommits'].includes(key))) throw Error('Unsupported fleet field');
+  if (spec.allowAsyncCommits !== undefined && typeof spec.allowAsyncCommits !== 'boolean') throw Error('allowAsyncCommits must be boolean');
   identityConfiguration(spec.identity);
   if (!spec.identity) throw Error('Enterprise fleets require identity configuration');
   ValidateReplication(spec.replication);

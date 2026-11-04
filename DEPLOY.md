@@ -665,7 +665,7 @@ fencing, metadata and recovery still need their own availability design.
 | Layer / option | Configuration available here | Availability implications |
 |---|---|---|
 | WAL replication | `replication: {scope: availability-zones, mode: synchronous-quorum, safekeepers: 3, zones: [zone-a, zone-b, zone-c]}` | Exactly one safekeeper in each selected zone. The majority-quorum design depends on two reachable, durable voters; actual zone-loss recovery remains unqualified in this deployment. |
-| PostgreSQL commit policy | `NeonDatabase.spec.profile: durable` | Required for enterprise synchronous-quorum fleets. Attempts to use `bounded-async` are rejected rather than creating an asynchronous fleet policy. |
+| PostgreSQL commit policy | `NeonDatabase.spec.profile: durable` | Default is synchronous quorum. A fleet administrator can set `NeonFleet.spec.allowAsyncCommits: true` to permit explicit `bounded-async` or `best-effort` database profiles. Safekeeper placement and disk flushing stay enabled. |
 | Page placement | `tier: shared`, `standard`, or `performance` | `shared` requests no secondary; `standard` and `performance` request one. The packaged fleet has two pageservers, assigned to the first two configured zones. Secondary pageservers are page-storage copies, not SQL read replicas. |
 | Metadata availability | `storage.metadataDatabaseSecretRef` | Use your externally operated HA PostgreSQL service. Without this field, metadata is one local PostgreSQL StatefulSet. |
 | Local durable state | `storage.storageClass` | CSI volumes must survive worker loss and have suitable zone attachment behavior. Local-path or node-local storage does not provide this guarantee. |
@@ -675,11 +675,13 @@ fencing, metadata and recovery still need their own availability design.
 | Idle cost | `suspend: {mode: never}` or `{mode: idle, idleSeconds: 300}` | Warm workers favor readiness; worker-to-zero trades idle cost for recovery/startup time. Proxy, controller/scaler, KEDA and required IdP services still need an available home. |
 
 Only the displayed replication scope, mode and safekeeper count are accepted by
-`NeonFleet`; two-zone, five-voter, cross-region, cross-cluster, asynchronous fleet
-replication, SQL read replicas and multi-writer modes are not exposed options.
-`bounded-async` remains an explicit non-enterprise deployment profile, with the
-limitations in [durability and qualification](#durability-retention-and-qualification).
-It must not be represented as a cross-zone one-second-loss guarantee.
+`NeonFleet`; two-zone, five-voter, cross-region, cross-cluster,
+SQL read replicas and multi-writer modes are not exposed options.
+Loss-tolerant client acknowledgements require explicit administrator permission
+through `spec.allowAsyncCommits: true`; they retain the same physical safekeeper
+topology. See [commit profiles](#commit-profiles). They provide no cross-zone
+one-second-loss guarantee. Before revoking the permission, suspend and change
+loss-tolerant databases back to `durable`.
 
 More independent database computes can distribute independent workloads. Adding
 compute replicas does not increase one database's write throughput. Storage
@@ -1198,6 +1200,83 @@ when a public help page has not yet been published.
 
 ## Packaged PostgreSQL extensions
 
+### Native DOCB documents (experimental)
+
+The unpublished source build packages the native `docb` type and its engine
+storage support. Existing published images do not include it. Build compute and
+storage images from the same source receipt before evaluating it; this is an
+experimental format, not an RC qualification or an automatic table conversion.
+Existing JSONB columns and the PostgreSQL catalog version remain unchanged.
+
+An administrator enables the packaged extension once in each selected database:
+
+```sql
+CREATE EXTENSION docb;
+CREATE TABLE documents (id bigint PRIMARY KEY, body docb NOT NULL);
+INSERT INTO documents VALUES (1, '{"profile":{"name":"Ada"},"status":"new"}');
+UPDATE documents SET body=jsonb_set(body, '{status}', '"ready"');
+SELECT body->'profile'->>'name' FROM documents WHERE id=1;
+CREATE INDEX documents_search ON documents USING gin(body docb_path_ops);
+```
+
+The extension supplies the type, operators and index classes. Applications do
+not define custom patch procedures, triggers, side tables or replay services.
+Existing JSON functions work through a native materializing cast; no overloads
+are added to `jsonb_set`, preserving resolution of existing untyped-literal
+queries. Subscript assignment also works. Operator chains and `#>`/`#>>` can
+read selected ranges without materializing a large intermediate document.
+`docb_ops` supports B-tree/hash and general GIN searches; `docb_path_ops` supports
+GIN containment/JSONPath with the same scope as JSONB's corresponding classes.
+Range/sort predicates still need suitable expression or relational indexes.
+
+Small profitable updates persist a versioned immutable delta instead of copying
+the whole document. Verified range matching also retains large intervening payloads
+when a length-changing edit changes both metadata and a later field. A 512-byte
+current-value head accelerates common projections. Each root consolidates changes
+against one immutable full base, so repeated edits do not create replay chains or
+periodic full rewrites. Superseded metadata is retired while retaining the base
+for current and snapshot-visible values. Roots contain at most 64 ranges and must
+be smaller than one quarter of the complete value; other cases rebase. Unchanged
+content can reuse its existing root. Full values remain canonical JSONB internally,
+and ordinary PostgreSQL WAL carries the storage changes. Commit durability and
+safekeeper flush settings are preserved. This does not turn one database into a
+multi-writer database.
+
+`wal_level=logical` is supported. While **any logical replication slot exists in
+that database**, including an inactive slot, writes use independent full values
+so ordinary CDC can decode them after vacuum or table retirement. The delta-write
+gain does not apply in that mode; selective reads still work. Physical replication
+and Neon quorum storage do not require that fallback. Do not drop a needed slot
+to improve performance.
+
+Bounded RAM-only checks on 64 KiB documents showed roughly 5x Neon write
+throughput over JSONB and about 50x less WAL with GIN, plus faster small projections,
+while retaining synchronous quorum acknowledgement. The fixture includes a separate
+unmodified PostgreSQL control. These short tests measure architecture, not disk
+IOPS, S3 bandwidth, multi-zone capacity or a universal performance guarantee.
+Reproduce them with the [DOCB qualification groups](neon/tests/README.md#native-docb-storage).
+
+The separate best-effort screen improved DOCB throughput further, but results
+varied between short runs. It changes acknowledgement guarantees and is not a
+durable quorum result. Durable Neon DOCB still ran substantially slower than local DOCB;
+format gains do not remove quorum round-trip cost. Fresh-compute starts on warm
+local storage were about 210 ms. Earlier readiness timeouts were traced to fixture
+HTTP listener ports overlapping Linux's ephemeral client-port range. The fixture
+now reserves ports outside that range, and compute startup propagates listener
+bind errors before starting PostgreSQL. An occupied-port check verifies that
+failure path; the subsequent durable branch/wake check passes. This does not
+qualify cold object-storage startup or production wake latency.
+
+Drivers may need a mapping for the new type OID. Text and binary wire interchange
+use canonical JSON with the JSONB version byte for binary values; storage deltas
+never become an application wire codec. `body::jsonb` exports ordinary JSONB.
+Migrating existing columns requires an explicitly planned conversion. Export to
+JSONB before moving to an engine without DOCB support; do not directly downgrade
+files containing delta records. Full rebases are currently uncompressed to keep
+range reads seekable, so highly compressible documents can use more space than
+ordinary JSONB. Large structural edits can fall back to full writes, and existing
+JSON function calls/GIN extraction can still materialize whole values.
+
 ### Statement metrics and idle-safe telemetry
 
 Managed compute always preloads `neon,pg_stat_statements`, with query identifiers
@@ -1510,10 +1589,53 @@ Use the versioned source contracts when writing automation:
 
 ## Durability, retention and qualification
 
-`durable` is the default profile, with fsync and synchronous commit enabled.
-Opt-in `bounded-async` acknowledges earlier and risks an acknowledged tail. Its
-750ms/64MB guard settings do not constitute a sustained-load one-second RPO
-certification. Both profiles drain on planned suspension. Fleet shutdown additionally
+### Commit profiles
+
+Read [Best effort versus durable: cloud write-loss risk](BEST_EFFORT_VS_DURABLE.md)
+for failure scenarios, worst cases and explicitly hypothetical probability models.
+
+Choose the loss tolerance for each database through `spec.profile`. Applications
+keep their existing PostgreSQL connection and SQL commands.
+
+| User intent | `profile` | Acknowledgement policy |
+|---|---|---|
+| Preserve acknowledged commits | `durable` (default) | Wait for durable safekeeper quorum. |
+| Roughly good; some recent loss is acceptable | `bounded-async` | Acknowledge ahead of quorum while the verified frontier is fresh, quorum is live, and pending WAL stays within the configured bounds. Block when admission limits are reached. |
+| Prioritize throughput; acknowledged loss is acceptable | `best-effort` | Acknowledge asynchronous transactions without the remote age/live-quorum admission checks. There is no configured time bound on acknowledged-write loss. Storage backpressure and capacity limits can still stall writes. |
+
+Both asynchronous profiles use ephemeral compute WAL without local fsync waits;
+all three safekeepers retain disk flushing. The `bounded-async` defaults are
+750ms/64MB admission bounds, not a sustained-load one-second RPO certification.
+`best-effort` is an explicit opt-in; it never becomes the default. It uses the
+native `neon.best_effort_commit` startup setting while retaining the drain guard.
+Transactions explicitly requesting synchronous commit still wait for quorum.
+
+For Kubernetes, add `profile: best-effort` (or `bounded-async`) to the
+`NeonDatabase.spec` shown above. For Compose, use the same `profile` field in
+each `tenants[]` entry of the cluster configuration. The management API accepts
+the identical field:
+
+```text
+PUT /v1/databases/events
+{"size":"small","tier":"standard","profile":"best-effort","suspend":{"mode":"idle","idleSeconds":300}}
+```
+
+Enterprise administrators must first enable `allowAsyncCommits: true` in their
+`NeonFleet.spec`. This permission does not select a profile for any database or
+change physical storage identity. Existing deployments need the updated database
+and enterprise fleet CRDs, tenant controller, and compute image together. Wake
+verification rejects a best-effort runtime that does not report the requested
+policy. To change an existing database's profile, complete a managed suspend,
+update its YAML/API definition, then resume so the startup settings take effect.
+
+A short local, RAM-backed eight-CPU-total diagnostic measured best-effort JSONB/GIN
+updates at 14.5–15.5k/s versus 7.3–7.6k/s with synchronous quorum (about 2x).
+WAL-only commits reached 79–80k/s versus 22–23k/s (about 3.5x). Two two-second
+measurements per mode are directional evidence, not production capacity or disk
+durability qualification. This gain changes acknowledgement guarantees; it is
+not a claim that strict durable-quorum performance improved by the same factor.
+
+All three profiles drain on planned suspension. Fleet shutdown additionally
 checks the generation-validated remote frontier for every managed storage shard.
 A failed S3 durability check leaves storage running.
 

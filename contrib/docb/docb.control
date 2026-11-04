@@ -1,0 +1,7 @@
+comment = 'experimental native document deltas and selective projections'
+default_version = '0.1'
+module_pathname = '$libdir/docb'
+relocatable = false
+schema = 'pg_catalog'
+superuser = true
+trusted = false

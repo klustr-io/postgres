@@ -15,6 +15,23 @@ function manager() {
   databases.base = () => structuredClone(base);
   return databases;
 }
+
+test('Kubernetes and managed database contracts accept all commit profiles with explicit fleet loss permission', () => {
+  const databases=manager(), base=databases.base();
+  const properties=parse(fs.readFileSync('neon/packaging/kubernetes/keda/database-crd.yaml','utf8'))
+    .spec.versions[0].schema.openAPIV3Schema.properties.spec.properties;
+  assert.deepEqual(properties.profile.enum,['durable','bounded-async','best-effort']);
+  assert.equal(properties.profile.default,'durable');
+  const permission=parse(fs.readFileSync('neon/packaging/kubernetes/enterprise/fleet-crd.yaml','utf8'))
+    .spec.versions[0].schema.openAPIV3Schema.properties.spec.properties.allowAsyncCommits;
+  assert.deepEqual(permission,{type:'boolean',default:false});
+  for(const profile of properties.profile.enum){
+    const resource={metadata:{name:'events'},spec:{profile}};
+    assert.equal(databases.tenant(resource,base).profile,profile);
+    if(profile!=='durable')assert.throws(()=>databases.tenant(resource,{...base,replication:{mode:'synchronous-quorum'}}),{code:'ZONE_QUORUM_REQUIRES_DURABLE'});
+    assert.equal(databases.tenant(resource,{...base,replication:{mode:'synchronous-quorum'},allowAsyncCommits:true}).profile,profile);
+  }
+});
 test('KEDA targets the drain-aware database scale subresource and permits only one writer', () => {
   const databases = manager(), resource = {apiVersion: 'neon.klustr.io/v1alpha1', kind: 'NeonDatabase', metadata: {name: 'events', uid: 'one'},
     spec: {size: 'small', tier: 'standard', suspend: {mode: 'idle', idleSeconds: 300}}};

@@ -41,6 +41,7 @@ typedef struct BoundedCommitShared
 
 static BoundedCommitShared *shared;
 static bool enabled = false;
+static bool best_effort = false;
 static int max_age_ms = 750;
 static int max_lag_mb = 64;
 static SyncRepCommitGuard_hook_type previous_hook;
@@ -111,6 +112,15 @@ commit_guard(XLogRecPtr lsn, bool commit)
         terminate_after_commit();
         return;
     }
+    /* Explicit loss-tolerant policy: the WAL proposer and safekeepers keep
+     * flushing in the background. A planned drain closes this fast path;
+     * synchronous transactions still require the durable quorum below. */
+    if (best_effort && synchronous_commit <= SYNCHRONOUS_COMMIT_LOCAL_FLUSH &&
+        pg_atomic_read_u32(&shared->draining) == 0)
+    {
+        pg_atomic_fetch_add_u64(&shared->fast_acks, 1);
+        return;
+    }
     for (;;)
     {
         uint64 quorum, frontier, now;
@@ -176,6 +186,9 @@ BoundedCommitGuardInit(void)
         &max_age_ms, 750, 10, 750, PGC_POSTMASTER, GUC_UNIT_MS, NULL, NULL, NULL);
     DefineCustomIntVariable("neon.bounded_async_max_wal", "Maximum WAL bytes ahead of quorum for fast ACKs.",
         NULL, &max_lag_mb, 64, 1, 1024, PGC_POSTMASTER, GUC_UNIT_MB, NULL, NULL, NULL);
+    DefineCustomBoolVariable("neon.best_effort_commit", "Acknowledge asynchronous commits without a remote durability admission bound.",
+        "Acknowledged writes may be lost; synchronous commits and planned drains retain quorum durability.",
+        &best_effort, false, PGC_POSTMASTER, 0, NULL, NULL, NULL);
     previous_hook = SyncRepCommitGuard_hook;
     SyncRepCommitGuard_hook = commit_guard;
     if (!enabled)
@@ -293,10 +306,10 @@ bounded_commit_guard_status(PG_FUNCTION_ARGS)
     pending = pg_atomic_read_u64(&shared->pending_prefix_lsn);
     now = monotonic_us();
     snprintf(buffer, sizeof(buffer),
-        "{\"enabled\":%s,\"max_age_ms\":%d,\"max_wal_bytes\":%llu,\"age_ms\":%lld,"
+        "{\"enabled\":%s,\"best_effort\":%s,\"max_age_ms\":%d,\"max_wal_bytes\":%llu,\"age_ms\":%lld,"
         "\"quorum_lsn\":\"%X/%X\",\"pending_prefix_lsn\":\"%X/%X\","
         "\"fast_acks\":%llu,\"waits\":%llu,\"wait_us\":%llu,\"draining\":%s,\"quorum_available\":%s}",
-        enabled ? "true" : "false", max_age_ms, (unsigned long long) max_lag_mb * 1024 * 1024,
+        enabled ? "true" : "false", best_effort ? "true" : "false", max_age_ms, (unsigned long long) max_lag_mb * 1024 * 1024,
         frontier && now >= frontier ? (long long) ((now - frontier) / 1000) : -1LL,
         LSN_FORMAT_ARGS(quorum),
         LSN_FORMAT_ARGS(pending),

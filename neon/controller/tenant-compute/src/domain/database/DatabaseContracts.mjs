@@ -21,7 +21,7 @@
  * @property {string} [database] - SQL database name.
  * @property {string} [user] - SQL owner role.
  * @property {DatabaseIdentityBinding} [identity] - OIDC resource binding.
- * @property {'durable' | 'bounded-async'} [profile] - Commit durability profile.
+ * @property {'durable' | 'bounded-async' | 'best-effort'} [profile] - Commit acknowledgement and loss tolerance.
  * @property {string[]} [allowedIps] - Client network allowlist.
  * @property {number} [shards] - Storage shard count.
  * @property {number} [replicas] - Requested compute count, zero or one.

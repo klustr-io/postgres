@@ -12,7 +12,7 @@ const dns=value=>typeof value==='string'&&/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?
  * @property {string} endpointId - DNS-safe endpoint identifier beginning with ep-.
  * @property {string} image - Provider-authorized digest-pinned compute image.
  * @property {string} nodeName - Explicit single-writer worker placement.
- * @property {'durable' | 'bounded-async'} profile - Commit durability configuration.
+ * @property {'durable' | 'bounded-async' | 'best-effort'} profile - Commit acknowledgement and loss tolerance.
  * @property {string} projectId - Bounded project identity used in metrics.
  * @property {string} branchId - Bounded branch identity used in metrics.
  * @property {string} computeSpecSecret - Secret containing the native compute specification.
@@ -94,7 +94,7 @@ function ValidateEndpointIdentity(resource,config){
 function ValidateComputePlacement(config){
   if(typeof config.image!=='string'||!/^[-a-zA-Z0-9./:]+@sha256:[a-f0-9]{64}$/.test(config.image))throw Error('Compute image must be digest-pinned');
   if(typeof config.nodeName!=='string'||!/^[a-z0-9][a-z0-9.-]{0,252}$/.test(config.nodeName))throw Error('Explicit compute worker placement is required');
-  if(!['durable','bounded-async'].includes(config.profile))throw Error('Invalid commit profile');
+  ValidateCommitProfile(config.profile);
 }
 function ValidateComputeResources(resources){
   if(typeof resources!=='object'||Array.isArray(resources))throw Error('Invalid compute resources');
@@ -144,6 +144,7 @@ export function SecretText(secret,key){
  * @throws {Error} When the compute is not Primary or lacks authenticated storage and cluster roles.
  */
 export function RenderComputeSpec(input,endpoint){
+  ValidateCommitProfile(endpoint.profile);
   const spec=structuredClone(input);
   if(spec.mode&&spec.mode!=='Primary')throw Error('Only primary compute is supported');
   if(!spec.tenant_id||!spec.timeline_id||!spec.safekeeper_connstrings?.length||!spec.storage_auth_token)throw Error('Incomplete authenticated storage spec');
@@ -155,6 +156,7 @@ export function RenderComputeSpec(input,endpoint){
     ssl_key_file:'/run/compute-tls/tls.key',full_page_writes:'on',wal_compression:'zstd',
     fsync:endpoint.profile==='durable'?'on':'off',synchronous_commit:endpoint.profile==='durable'?'on':'off',
     'neon.bounded_async_commit':'on','neon.bounded_async_max_age':'750ms','neon.bounded_async_max_wal':'64MB',
+    'neon.best_effort_commit':endpoint.profile==='best-effort'?'on':'off',
     'neon.file_cache_path':'/var/lib/neon/lfc.cache'};
   if(endpoint.oauth)Object.assign(settings,{oauth_validator_libraries:'klustr_oauth',hba_file:'/run/oauth/pg_hba.conf',
     'klustr_oauth.validator_url':endpoint.oauth.validatorUrl,'klustr_oauth.ca_file':'/run/oauth/ca.crt',
@@ -168,4 +170,8 @@ export function RenderComputeSpec(input,endpoint){
 function ComputePreloadLibraries(cluster){
   const libraries=(cluster.settings||[]).find(option=>option.name==='shared_preload_libraries')?.value||'';
   return [...new Set(['neon','pg_stat_statements',...libraries.split(',').map(value=>value.trim()).filter(Boolean)])].join(',');
+}
+
+function ValidateCommitProfile(profile){
+  if(!['durable','bounded-async','best-effort'].includes(profile))throw Error('Invalid commit profile');
 }

@@ -12,6 +12,17 @@ test('Observing dormant compute cannot connect to SQL or publish wake demand',as
   assert.deepEqual(lifecycle.activityIds(),[]);
 });
 import {Lifecycle} from '../../../controller/tenant-compute/src/infrastructure/compute/Lifecycle.mjs';
+test('Wake verifies the requested best-effort policy instead of accepting an older or mismatched runtime',async()=>{
+  let observed=false,ended=0;
+  const lifecycle=new Lifecycle({}, {require(){}}, async()=>{});
+  lifecycle.admin=async()=>({query:async()=>({rows:[{version:180006,recovery:false,
+    guard:{enabled:true,quorum_available:true,best_effort:observed}}]}),end:async()=>{ended++;}});
+  await assert.rejects(lifecycle.verify({profile:'best-effort',status:{}},{}),/requested commit policy/);
+  observed=true;
+  await lifecycle.verify({profile:'best-effort',status:{}},{});
+  await assert.rejects(lifecycle.verify({profile:'durable',status:{}},{}),/requested commit policy/);
+  assert.equal(ended,3);
+});
 import {Leadership} from '../../../controller/tenant-compute/src/infrastructure/kubernetes/Kubernetes.mjs';
 const OWNER='neon.klustr.io/endpoint-uid',ADMISSION='neon.klustr.io/admission';
 function fixture({clients=0,drainError=false}={}){

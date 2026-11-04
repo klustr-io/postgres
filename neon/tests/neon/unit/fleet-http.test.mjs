@@ -42,10 +42,11 @@ test('Fleet HTTP route preserves optimistic concurrency and audits accepted OIDC
   const {spec, fleets, writes, audit, request} = await fixture(t);
   fleets.push({metadata: {name: 'conflict', uid: 'new'}, spec});
   const read = await request('GET'); assert.equal(read.status, 200); assert.equal((await read.json()).name, 'acme');
-  const reply = await request('PUT', {...spec, defaults: {size: 'medium'}});
+  const reply = await request('PUT', {...spec, allowAsyncCommits: true, defaults: {size: 'medium'}});
   assert.equal(reply.status, 202); assert.deepEqual(await reply.json(), {name: 'acme', generation: 2});
   assert.equal(writes.length, 1); assert.equal(writes[0].body.metadata.resourceVersion, '42');
   assert.equal(writes[0].body.spec.defaults.size, 'medium');
+  assert.equal(writes[0].body.spec.allowAsyncCommits, true);
   const accepted = audit.find(fact => fact.outcome === 'accepted');
   assert.equal(accepted.subject, 'operator-1'); assert.equal(accepted.issuer, spec.identity.issuer);
   assert.equal(accepted.authentication, 'oidc'); assert(accepted.operationId);

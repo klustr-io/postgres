@@ -187,7 +187,7 @@ const databaseSchema = {type: 'object', properties: {
   database: {type: 'string', pattern: '^[a-z][a-z0-9_]{0,62}$', default: 'app', 'x-kubernetes-validations': [{rule: 'self == oldSelf', message: 'Database name is immutable'}]},
   user: {type: 'string', pattern: '^[a-z][a-z0-9_]{0,62}$', default: 'app_user', 'x-kubernetes-validations': [{rule: 'self == oldSelf', message: 'Database role is immutable'}]},
   size: {type: 'string', maxLength: 39}, tier: {type: 'string', maxLength: 39},
-  profile: {type: 'string', enum: ['durable', 'bounded-async'], default: 'durable'},
+  profile: {type: 'string', enum: ['durable', 'bounded-async', 'best-effort'], default: 'durable'},
   shards: {type: 'integer', enum: [1, 2, 4, 8, 16, 32], default: 1},
   allowedIps: {type: 'array', maxItems: 100, minItems: 1, items: {type: 'string', maxLength: 64}},
   suspend: {type: 'object', properties: {

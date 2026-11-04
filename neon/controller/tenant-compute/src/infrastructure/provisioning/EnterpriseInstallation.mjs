@@ -21,6 +21,7 @@ export function EnterpriseInstallation(image, namespace = 'neon') {
       additionalPrinterColumns: [{name: 'Phase', type: 'string', jsonPath: '.status.phase'}, {name: 'Zones', type: 'boolean', jsonPath: '.status.zonePlacementConfigured'}],
       schema: {openAPIV3Schema: {type: 'object', properties: {spec: {type: 'object', required: ['domain', 'identity', 'storage', 'replication'],
         properties: {domain: {type: 'string', minLength: 1, maxLength: 253, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$'}, clientCIDRs: {type: 'array', minItems: 1, maxItems: 100, items: {type: 'string'}},
+          allowAsyncCommits: {type: 'boolean', default: false},
           identity: {type: 'object', 'x-kubernetes-preserve-unknown-fields': true},
           storage: {type: 'object', required: ['objectStoreSecretRef', 'storageClass'], properties: {objectStoreSecretRef: {type: 'string'}, storageClass: {type: 'string'}, metadataDatabaseSecretRef: {type: 'string'}}},
           replication: {type: 'object', required: ['scope', 'mode', 'zones', 'safekeepers'], properties: {

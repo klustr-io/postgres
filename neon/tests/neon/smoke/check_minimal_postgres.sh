@@ -8,6 +8,18 @@ start
 trap 'pg_ctl -D /tmp/minimal-pg -m immediate -w stop >/dev/null 2>&1 || true' EXIT
 psql -h /tmp -d postgres -v ON_ERROR_STOP=1 <<'SQL'
 CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+CREATE EXTENSION docb;
+CREATE TABLE native_documents (id integer PRIMARY KEY, body docb);
+INSERT INTO native_documents
+  SELECT 1,jsonb_build_object('status','new','payload',string_agg(md5(n::text),''))::docb
+  FROM generate_series(1,256) n;
+UPDATE native_documents SET body=jsonb_set(body,'{status}','"ready"');
+DO $$BEGIN
+  IF (SELECT body->>'status' FROM native_documents WHERE id=1) IS DISTINCT FROM 'ready'
+     OR (SELECT pg_column_compression(body) FROM native_documents WHERE id=1) IS DISTINCT FROM 'docb_delta' THEN
+    RAISE EXCEPTION 'Native DOCB delta storage or projection failed';
+  END IF;
+END$$;
 CREATE EXTENSION pgcrypto;
 CREATE EXTENSION xml2;
 CREATE EXTENSION anon;

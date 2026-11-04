@@ -18,6 +18,32 @@ test('Managed compute always preloads statement telemetry while preserving optio
   assert.equal(rendered.cluster.settings.find(option => option.name === 'compute_query_id').value, 'on');
 });
 
+test('Commit profiles reach native compute without weakening safekeeper or planned-drain settings', () => {
+  const native = {tenant_id:'tenant',timeline_id:'timeline',safekeeper_connstrings:['storage:5454'],
+    storage_auth_token:'fixture',cluster:{roles:[],settings:[{name:'neon.best_effort_commit',value:'on'}]}};
+  for (const profile of ['durable','bounded-async','best-effort']) {
+    const rendered = RenderComputeSpec(native,{profile});
+    const settings = Object.fromEntries(rendered.cluster.settings.map(option=>[option.name,option.value]));
+    assert.equal(settings.fsync,profile==='durable'?'on':'off');
+    assert.equal(settings.synchronous_commit,profile==='durable'?'on':'off');
+    assert.equal(settings['neon.bounded_async_commit'],'on');
+    assert.equal(settings['neon.best_effort_commit'],profile==='best-effort'?'on':'off');
+    assert.equal(settings['neon.bounded_async_max_age'],'750ms');
+    assert.equal(rendered.suspend_timeout_seconds,-1);
+    assert.deepEqual(rendered.safekeeper_connstrings,native.safekeeper_connstrings);
+  }
+  assert.throws(()=>RenderComputeSpec(native,{profile:'fastest'}),/Invalid commit profile/);
+});
+
+test('Loss-tolerant databases require explicit fleet permission, including seeded tenants', () => {
+  const base = configuration('neon/packaging/compose/config/cluster.yaml');
+  for (const profile of ['bounded-async','best-effort']) {
+    const input = {...base,replication:{mode:'synchronous-quorum'},tenants:[{name:'example',profile,allowedIps:base.clientCIDRs}]};
+    assert.throws(()=>normalizeConfiguration(structuredClone(input)),/ZONE_QUORUM_REQUIRES_DURABLE/);
+    assert.equal(normalizeConfiguration({...structuredClone(input),allowAsyncCommits:true}).tenants[0].profile,profile);
+  }
+});
+
 test('Deployment config uses stable tenant identities and accepts normal SQL role names', () => {
   const base = configuration('neon/packaging/compose/config/cluster.yaml');
   const config = normalizeConfiguration({...base, tenants: [{name: 'example', allowedIps: base.clientCIDRs}]});

@@ -70,6 +70,20 @@ test('Fleet plans enforce physical safekeeper zones, durable CSI, KEDA and expli
   assert(plan.resources.find(row => row.metadata.name === 'neon-proxy' && row.kind === 'Deployment').spec.template.spec.containers[0].args.includes('--project-info-cache'));
   assert(plan.resources.every(row => row.metadata.namespace === 'enterprise'));
 });
+
+test('Fleet loss-tolerant opt-in preserves physical storage identity and synchronous safekeeper flushing', () => {
+  const resource = fleet(), opts = options(), strict = fleetResources(resource,opts);
+  resource.status = {storageIdentity:strict.storageIdentity};
+  resource.spec.allowAsyncCommits = true;
+  const permissive = fleetResources(resource,opts);
+  assert.equal(permissive.config.allowAsyncCommits,true);
+  assert.equal(permissive.storageIdentity,strict.storageIdentity);
+  const safekeepers = permissive.resources.filter(row=>row.kind==='StatefulSet'&&row.metadata.name.startsWith('safekeeper-'));
+  assert.equal(safekeepers.length,3);
+  assert(safekeepers.every(row=>!JSON.stringify(row.spec.template.spec.containers).includes('--no-sync')));
+  resource.spec.allowAsyncCommits = 'true';
+  assert.throws(()=>ValidateFleet(resource),/must be boolean/);
+});
 test('Missing physical zones and attempted storage identity changes fail before provisioning', () => {
   const resource = fleet(), opts = options();
   assert.throws(() => fleetResources(resource, {...opts, nodes: opts.nodes.slice(0, 1)}), /each configured physical zone/);

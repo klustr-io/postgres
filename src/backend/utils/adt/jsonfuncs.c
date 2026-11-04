@@ -13,6 +13,7 @@
  */
 
 #include "postgres.h"
+#include "utils/docb.h"
 
 #include <limits.h>
 
@@ -6049,6 +6050,12 @@ json_categorize_type(Oid typoid, bool is_jsonb,
 			break;
 
 		default:
+			if (docb_is_type(typoid))
+			{
+				getTypeOutputInfo(typoid, outfuncoid, &typisvarlena);
+				*tcategory = is_jsonb ? JSONTYPE_JSONB : JSONTYPE_JSON;
+				break;
+			}
 			/* Check for arrays and composites */
 			if (OidIsValid(get_element_type(typoid)) || typoid == ANYARRAYOID
 				|| typoid == ANYCOMPATIBLEARRAYOID || typoid == RECORDARRAYOID)

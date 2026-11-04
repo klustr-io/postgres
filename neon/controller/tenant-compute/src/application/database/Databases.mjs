@@ -155,7 +155,7 @@ export class Databases {
     if (seen.has(resource.metadata.name)) throw problem('BRANCH_CYCLE');
     seen.add(resource.metadata.name);
     new DatabaseDefinition({name: resource.metadata.name, resource}).Validate();
-    if (base.replication?.mode === 'synchronous-quorum' && resource.spec.profile && resource.spec.profile !== 'durable') throw problem('ZONE_QUORUM_REQUIRES_DURABLE');
+    if (base.replication?.mode === 'synchronous-quorum' && base.allowAsyncCommits !== true && resource.spec.profile && resource.spec.profile !== 'durable') throw problem('ZONE_QUORUM_REQUIRES_DURABLE');
     const seed = base.tenants.find(tenant => tenant.name === resource.metadata.name);
     const seedPolicy = Object.fromEntries(Object.entries(seed || {}).filter(([key]) => !['resources', 'settings', 'storagePolicy'].includes(key)));
     const tenant = normalizeConfiguration({...base, tenants: [{...seedPolicy, ...resource.spec, name: resource.metadata.name,

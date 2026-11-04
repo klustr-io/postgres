@@ -142,6 +142,7 @@ spec:
                   enum:
                     - durable
                     - bounded-async
+                    - best-effort
                   default: durable
                 shards:
                   type: integer

@@ -293,7 +293,8 @@ export class Lifecycle {
     const client=await this.admin(endpoint,pod);
     try{
       const row=(await client.query("SELECT current_setting('server_version_num')::int AS version, pg_is_in_recovery() AS recovery, neon.bounded_commit_guard_status()::json AS guard")).rows[0];
-      if(row.version<180000||row.version>=190000||row.recovery||!row.guard.enabled||!row.guard.quorum_available)throw Error('Compute is not a guarded PG18 primary');
+      if(row.version<180000||row.version>=190000||row.recovery||!row.guard.enabled||!row.guard.quorum_available||
+        Boolean(row.guard.best_effort)!==(endpoint.profile==='best-effort'))throw Error('Compute is not a guarded PG18 primary with the requested commit policy');
       if(endpoint.status.drainedLSN){
         const check=await client.query('SELECT pg_current_wal_insert_lsn() >= $1::pg_lsn AS recovered',[endpoint.status.drainedLSN]);
         if(!check.rows[0].recovered)throw Error('Compute is behind its persisted handoff frontier');

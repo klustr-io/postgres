@@ -12,10 +12,17 @@ Kubernetes tenant/compute controller. The current release candidate is
 
 [Database lifecycle, backup retention and branching](DEPLOY.md#history-backups-and-branches)
 are configured through the management API and Kubernetes resources.
+See [best-effort versus durable write-loss risk](BEST_EFFORT_VS_DURABLE.md) for
+cloud failure scenarios, worst cases and probability-model assumptions.
 Customer-owned [enterprise fleets and OIDC](DEPLOY.md#enterprise-fleets-and-oidc)
 add namespace-scoped provisioning, short-lived database logins and zone placement.
 Source builds also package [Anonymizer, DataSketches, vectors, TimescaleDB and BM25](DEPLOY.md#packaged-postgresql-extensions),
 alongside PostgreSQL's built-in full-text search.
+Unpublished source also includes an opt-in native [`docb` document type](DEPLOY.md#native-docb-documents-experimental)
+with delta storage and selective projections; existing `jsonb` columns retain
+their current storage behavior. This requires matching rebuilt images.
+Read the [performance report](blog.md) for document benchmarks, selective reads
+and the tradeoffs between durable and asynchronous commit profiles.
 The source update also supports configurable [native PG18 OAuth login](DEPLOY.md#native-postgresql-18-oauth-login)
 through the proxy and an installed token validator. It requires matching rebuilt
 compute, proxy and controller images; the older RC5 digests do not include it.

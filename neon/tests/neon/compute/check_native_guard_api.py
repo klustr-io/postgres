@@ -32,11 +32,13 @@ try:
     assert sql("SELECT extversion FROM pg_extension WHERE extname='neon'").stdout.strip() == '1.7'
     status = json.loads(sql('SELECT neon.bounded_commit_guard_status()').stdout)
     assert not status['enabled']
+    assert not status['best_effort']
     sql('CREATE TABLE default_off_probe(id int); INSERT INTO default_off_probe VALUES(1)')
     assert sql('SELECT count(*) FROM default_off_probe').stdout.strip() == '1'
     checks.append('Default-off local PostgreSQL commits and extension 1.7 install')
-    denied = sql('SET neon.bounded_async_commit=on',False)
-    assert denied.returncode != 0 and 'cannot be changed without restarting' in denied.stderr
+    for setting in ('neon.bounded_async_commit', 'neon.best_effort_commit'):
+        denied = sql('SET '+setting+'=on',False)
+        assert denied.returncode != 0 and 'cannot be changed without restarting' in denied.stderr
     checks.append('Session cannot turn the postmaster policy on or off')
     sql('CREATE ROLE native_guard_reader; GRANT USAGE ON SCHEMA neon TO native_guard_reader')
     for name in ['bounded_commit_guard_status','bounded_commit_guard_drain']:

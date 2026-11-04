@@ -59,6 +59,7 @@ const name = value => typeof value === 'string' && /^[a-z][a-z0-9-]{0,38}$/.test
  * @property {string[]} [clientCIDRs] - Default client network allowlist when a tenant omits one.
  * @property {import('../identity/IdentityPolicy.mjs').IdentityConfigurationValue} [identity] - Enterprise OIDC policy; absent in static-credential deployments.
  * @property {import('../fleet/FleetSpecification.mjs').FleetReplicationSpecification} [replication] - Enterprise zone quorum policy when present.
+ * @property {boolean} [allowAsyncCommits] - Explicit enterprise permission for loss-tolerant database profiles.
  */
 /**
  * Normalize provider configuration and enforce a single writer endpoint per native timeline.
@@ -69,6 +70,7 @@ const name = value => typeof value === 'string' && /^[a-z][a-z0-9-]{0,38}$/.test
  * @throws {Error} When identity, S3 destination, DNS, tenant policy, storage placement or endpoint validation fails.
  */
 export function NormalizeClusterConfiguration(config) {
+  if (config.allowAsyncCommits !== undefined && typeof config.allowAsyncCommits !== 'boolean') throw Error('allowAsyncCommits must be boolean');
   ValidateClusterIdentity(config);
   NormalizeStorage(config);
   config.tenants ??= [];
@@ -111,7 +113,8 @@ function NormalizeTenantPolicy(tenant, config) {
   tenant.database ??= 'app'; tenant.user ??= 'app_user';
   if (![tenant.database, tenant.user].every(value => typeof value === 'string' && /^[a-z][a-z0-9_]{0,62}$/.test(value))) throw Error('Simple PostgreSQL database and user names required');
   tenant.profile ??= 'durable';
-  if (!['durable', 'bounded-async'].includes(tenant.profile)) throw Error('Unknown commit profile');
+  if (!['durable', 'bounded-async', 'best-effort'].includes(tenant.profile)) throw Error('Unknown commit profile');
+  if (config.replication?.mode === 'synchronous-quorum' && config.allowAsyncCommits !== true && tenant.profile !== 'durable') throw Error('ZONE_QUORUM_REQUIRES_DURABLE');
   tenant.suspend = policy(tenant.suspend);
   tenant.databasePolicies ??= {};
   for (const value of Object.values(tenant.databasePolicies)) policy(value);

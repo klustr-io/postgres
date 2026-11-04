@@ -73,6 +73,7 @@ function ResolveFleetConfiguration(resource, selected, computeImage, objectStore
   const config = normalizeConfiguration({name: resource.metadata.name, domain: spec.domain,
     computeImage,
     computeNodes: selected.map(node => node.metadata.name), identity: spec.identity, replication: spec.replication,
+    allowAsyncCommits: spec.allowAsyncCommits === true,
     defaults: {size: 'small', tier: 'standard', ...spec.defaults}, clientCIDRs: spec.clientCIDRs || ['10.0.0.0/8'],
     storage: {pageservers: [{id: 1, host: 'pageserver', zone: spec.replication.zones[0]}, {id: 2, host: 'pageserver-2', zone: spec.replication.zones[1]}],
       safekeeperZones: spec.replication.zones, externalMetadata: Boolean(spec.storage.metadataDatabaseSecretRef)},
