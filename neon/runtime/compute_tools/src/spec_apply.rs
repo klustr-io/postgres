@@ -1110,6 +1110,11 @@ async fn get_operations<'a>(
                     Ok(Box::new(operations))
                 }
                 PerDatabasePhase::CreatePgStatStatements => {
+                    // The system database is handled by the serial phase below.
+                    // Avoid concurrent CREATE EXTENSION when postgres is also a user DB.
+                    if matches!(db, DB::SystemDB) {
+                        return Ok(Box::new(empty()));
+                    }
                     if spec.cluster.settings.find("shared_preload_libraries")
                         .is_some_and(|libs| libs.split(',').any(|lib| lib.trim() == "pg_stat_statements"))
                     {

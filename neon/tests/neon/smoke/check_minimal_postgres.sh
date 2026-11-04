@@ -2,7 +2,7 @@
 set -eu
 initdb -D /tmp/minimal-pg -A trust --data-checksums --locale=C.UTF-8 > /tmp/initdb.log 2>&1
 start() {
-  pg_ctl -D /tmp/minimal-pg -l /tmp/postgres.log -o "-c listen_addresses='' -c unix_socket_directories=/tmp -c max_worker_processes=32 -c shared_preload_libraries=neon,timescaledb,anon,pg_textsearch,pg_stat_statements" -w start || { cat /tmp/postgres.log; exit 1; }
+  pg_ctl -D /tmp/minimal-pg -l /tmp/postgres.log -o "-c listen_addresses='' -c unix_socket_directories=/tmp -c max_worker_processes=32 -c shared_preload_libraries=neon,pg_stat_statements,timescaledb,anon,pg_textsearch" -w start || { cat /tmp/postgres.log; exit 1; }
 }
 start
 trap 'pg_ctl -D /tmp/minimal-pg -m immediate -w stop >/dev/null 2>&1 || true' EXIT
