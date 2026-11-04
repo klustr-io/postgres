@@ -50,9 +50,10 @@ pub(crate) enum AuthError {
 
     #[error(
         "Endpoint ID is not specified. \
-        Either please upgrade the postgres client library (libpq) for SNI support \
-        or pass the endpoint ID (first part of the domain name) as a parameter: '?options=endpoint%3D<endpoint-id>'. \
-        See more at https://neon.tech/sni"
+        Connect using the database endpoint hostname with TLS/SNI, \
+        or set the libpq parameter options='endpoint=<endpoint-id>' \
+        (URI: '?options=endpoint%3D<endpoint-id>'). \
+        See https://klustr.io/docs/neon/sni"
     )]
     MissingEndpointName,
 

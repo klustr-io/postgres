@@ -1,6 +1,23 @@
 // Provider-owned defaults. Tenants select a size/tier; storage credentials and
 // physical node placement are never accepted from the tenant webhook.
-import {RecoveryPolicy as recoveryPolicy} from '../recovery/RecoveryPolicy.mjs';
+import {RecoveryPolicy as recoveryPolicy, DomainProblem} from '../recovery/RecoveryPolicy.mjs';
+/** Libraries shipped in the compute image that need startup loading, in hook order. */
+export const PackagedPreloadLibraries = Object.freeze(['timescaledb', 'anon', 'pg_textsearch']);
+/**
+ * Validate an explicit packaged-library selection without granting filesystem or arbitrary library authority.
+ * The caller authorizes database configuration; this pure function has no I/O or mutation side effects.
+ * @param {string[] | undefined} libraries - Requested startup libraries, with omission preserving the existing policy.
+ * @returns {string[]} A canonical ordered selection, excluding Neon's mandatory library.
+ * @throws {Error} INVALID_SPEC for unknown libraries, duplicate entries or invalid shapes.
+ */
+export function DatabasePreloadLibraries(libraries) {
+  if (libraries === undefined) return [];
+  if (!Array.isArray(libraries) || libraries.length > PackagedPreloadLibraries.length ||
+      libraries.some(value => !PackagedPreloadLibraries.includes(value)) || new Set(libraries).size !== libraries.length) {
+    throw DomainProblem('INVALID_SPEC', 'Invalid packaged preload libraries');
+  }
+  return PackagedPreloadLibraries.filter(value => libraries.includes(value));
+}
 /**
  * @typedef {Object} ComputeSize
  * @property {string} cpu - Kubernetes CPU quantity, also converted to a Docker CPU limit.
@@ -51,6 +68,7 @@ import {RecoveryPolicy as recoveryPolicy} from '../recovery/RecoveryPolicy.mjs';
  * @property {number} [shards] - Supported power-of-two storage shard count.
  * @property {ComputeResourceBudget} [resources] - Explicit provider budget preserved when supplied.
  * @property {PostgresSetting[]} [settings] - Explicit settings override catalog defaults by name.
+ * @property {string[]} [preloadLibraries] - Allowlisted packaged libraries selected for startup.
  * @property {TenantStoragePolicy} [storagePolicy] - Derived storage policy replaced during catalog resolution.
  */
 /** @typedef {import('./DatabasePolicy.mjs').DatabaseDefaults & CatalogTenantOptions} CatalogTenant */
@@ -99,11 +117,24 @@ export function ApplyDatabaseCatalog(tenant, config) {
   const defaults = [{name: 'shared_buffers', value: size.sharedBuffers, vartype: 'string'},
     {name: 'max_connections', value: String(size.maxConnections), vartype: 'string'}];
   tenant.settings = [...defaults.filter(option => !(tenant.settings || []).some(value => value.name === option.name)), ...(tenant.settings || [])];
+  ConfigurePackagedLibraries(tenant);
   tenant.storagePolicy = {checkpoint_timeout: config.storage?.checkpointTimeout || '30s', pitr_interval: recoveryPolicy(tenant.backup).historySeconds + 's',
     placement_policy: {Attached: tier.secondaries}, timeline_get_throttle: {
     task_kinds: ['PageRequestHandler'], initial: tier.pageBurstPerShard, refill_interval: '1s',
     refill_amount: tier.pageRequestsPerSecondPerShard, max: tier.pageBurstPerShard}};
   return tenant;
+}
+// Mutate only the resolved compute settings; selecting a library grants no SQL privilege.
+function ConfigurePackagedLibraries(tenant) {
+  const libraries = DatabasePreloadLibraries(tenant.preloadLibraries);
+  if (tenant.preloadLibraries === undefined) return;
+  const existing = (tenant.settings.find(option => option.name === 'shared_preload_libraries')?.value || '').split(',')
+    .map(value => value.trim()).filter(value => value && value !== 'neon' && !PackagedPreloadLibraries.includes(value));
+  tenant.settings = [...tenant.settings.filter(option => option.name !== 'shared_preload_libraries'),
+    {name: 'shared_preload_libraries', value: [...new Set(['neon', ...libraries, ...existing])].join(','), vartype: 'string'}];
+  if (libraries.includes('timescaledb') && !tenant.settings.some(option => option.name === 'max_worker_processes')) {
+    tenant.settings.push({name: 'max_worker_processes', value: '32', vartype: 'string'});
+  }
 }
 function ValidateSize(size) {
   if (!/^(?:[1-9][0-9]*|[1-9][0-9]*m)$/.test(size.cpu) || !/^[1-9][0-9]*(?:Mi|Gi)$/.test(size.memory)) throw Error('Invalid provider size');

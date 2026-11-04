@@ -1,3 +1,32 @@
+# Packaged extensions and connection guidance - source changeset
+
+Source builds include PostgreSQL Anonymizer 3.3.2, Apache DataSketches 1.7.0
+(C++ core 5.2.0), pgvector 0.8.7, Apache-only TimescaleDB 2.31.0 and
+`pg_textsearch` 1.5.1 for BM25. PostgreSQL full-text search remains built in.
+Sources are pinned and hash-checked; runtime images retain licenses, file hashes
+and an extension SBOM. Timescale-Licensed features and telemetry are excluded.
+
+Database YAML/API and Compose accept an allowlisted `preloadLibraries` selection;
+branches inherit it when omitted. Standard per-database `CREATE EXTENSION`
+activation is separate from startup loading. The compute image build runs a
+small offline check for masking, sketches, indexed text/vector search,
+hypertables and restart using disposable tmpfs. See
+[configuration and SQL examples](../DEPLOY.md#packaged-postgresql-extensions).
+These additions require rebuilt compute/pageserver/controller images; prior
+published tags and deployment digests are unchanged.
+
+Proxy connection errors now link to Klustr documentation, and private local
+connection files are excluded from Git and Docker contexts. DEPLOY.md documents
+hostname/SNI routing without a required client endpoint selector and distinguishes
+extension installation from startup preloading. The certificate SAN routing fix
+is already present in the preceding source build. Gateway TLS termination with
+different frontend/backend certificates still requires an authentication
+integration fix; this changeset does not claim that public pgAdmin path is fixed.
+
+Release-branch pushes now build and publish the coordinated seven-image set.
+The independent controller workflow publishes `controller-sha-<commit>` rather
+than overwriting the coordinated release's `sha-<commit>` tag.
+
 # Commit-guard wakeups — unreleased changeset
 
 Quorum/frontier progress directly wakes waiting native commit-guard backends,

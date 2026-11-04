@@ -40,11 +40,16 @@ test('Purge needs an exact confirmation and refuses dependent branches or backup
 });
 test('Branches share storage tenant and history policy but have distinct writer timelines', async () => {
   const {databases, rows, root} = await fixture(); root.spec.backup = {historySeconds: 604800};
+  root.spec.preloadLibraries = ['timescaledb', 'anon', 'pg_textsearch'];
   const child = {metadata: {name: 'preview'}, spec: {size: 'small', tier: 'shared', branchFrom: {database: 'main'}}}; rows.set('preview', child);
   await databases.load();
   const parent = databases.tenant(root, databases.base()), branch = databases.tenant(child, databases.base());
   assert.equal(parent.tenantId, branch.tenantId); assert.notEqual(parent.timelineId, branch.timelineId);
   assert.equal(branch.storagePolicy.pitr_interval, '604800s'); assert.equal(branch.size, 'small');
+  assert.deepEqual(branch.preloadLibraries, ['timescaledb', 'anon', 'pg_textsearch']);
+  assert.equal(branch.settings.find(option => option.name === 'max_worker_processes').value, '32');
+  assert.deepEqual(branch.settings.find(option => option.name === 'shared_preload_libraries'),
+    parent.settings.find(option => option.name === 'shared_preload_libraries'));
   root.spec.branchFrom = {database: 'preview'};
   await databases.load();
   assert.throws(() => databases.tenant(child, databases.base()), {code: 'BRANCH_CYCLE'});

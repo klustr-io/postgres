@@ -1141,6 +1141,159 @@ The example assumes a local port forward to Service `neon-proxy`. Supply the
 password through a protected `.pgpass` or secret manager. No application-specific
 SQL functions or document APIs are required.
 
+### pgAdmin and public runtime aliases
+
+In pgAdmin's server dialog, set **Host name/address** to the published database
+hostname, **Port** to the actual PostgreSQL listener port (443 is valid when
+the platform publishes PostgreSQL there), **Maintenance database** to the SQL
+database, and **Username** and **Password** to the separate SQL credentials.
+In **Parameters**, set `sslmode` to `verify-full` with the appropriate trusted CA,
+or `require` when only encrypted transport is configured. Avoid `prefer`, which
+can retry without TLS and obscure the first error on a shared port 443 listener.
+
+The published hostname and TLS SNI must identify the database without a separate
+client endpoint parameter. A runtime gateway maps its registered public alias
+to the native endpoint and sends that endpoint as upstream SNI. This proxy
+source reads certificate DNS SANs, including certificates with a generic common
+name; older proxy images that only read the common name must be upgraded.
+Use an appropriate `connect_timeout` for a suspended database's wake, for
+example 90 seconds.
+
+The explicit libpq `options='endpoint=ep-events'` selector remains a fallback
+for clients without SNI. It is not required by the intended public hostname
+contract. Do not change SQL passwords to carry routing information.
+
+TLS termination is a separate integration constraint. If a gateway presents
+a different certificate and re-establishes TLS to the proxy, SCRAM channel
+binding cannot span those two certificate identities. The current offloaded
+public route can fail with `secure channel data mismatch`; this image changeset
+does not resolve that gateway authentication integration. Use an end-to-end
+TLS route when deploying clients that require channel binding. Do not treat
+client-side endpoint overrides or disabling channel binding as the permanent
+fix, and do not disable channel binding globally in the proxy.
+
+The public gateway must forward the PostgreSQL wire protocol to `neon-proxy`;
+an ordinary HTTP ingress cannot serve PostgreSQL. A generic TLS passthrough
+router may require libpq 17+ `sslnegotiation=direct` with `sslmode=require` or
+stronger; a PostgreSQL-aware listener supports normal SSL negotiation. Choose
+this from the deployed gateway's behavior, rather than enabling it blindly.
+`expected authentication request ... received H` often indicates an HTTP response;
+inspect the listener and TLS/fallback settings rather than treating it as a bad
+database password. See [pgAdmin parameters](https://www.pgadmin.org/docs/pgadmin4/latest/server_dialog.html)
+and [libpq TLS options](https://www.postgresql.org/docs/18/libpq-connect.html).
+
+Proxy client errors use Klustr-owned help links under
+`https://klustr.io/docs/neon/`, including `/sni` and
+`/connection-errors#unsupported-startup-parameter`. Those website routes must
+be published by the Klustr documentation site; changing the proxy does not
+publish the site. This deployment guide contains the setup instructions even
+when a public help page has not yet been published.
+
+## Packaged PostgreSQL extensions
+
+The source build installs the following into compute and pageserver images;
+no extension download service or package manager is needed at runtime. Older
+published RC5 and `fa67859` images do not contain these additions. Build a new
+coordinated image set before selecting these libraries, and update the packaged
+runtime digest authority as described in [image selection](#release-and-image-selection).
+Apply the updated database CRD as well; an older CRD can prune `preloadLibraries`.
+
+| Capability | Extension / version | Startup library |
+|---|---|---|
+| Data masking | [PostgreSQL Anonymizer](https://postgresql-anonymizer.readthedocs.io/en/stable/) `anon` 3.3.2 | `anon` |
+| Approximate distinct counts, quantiles and sketches | [Apache DataSketches](https://github.com/apache/datasketches-postgresql) `datasketches` 1.7.0, C++ core 5.2.0 | None |
+| Exact, HNSW and IVFFlat vector search | [pgvector](https://github.com/pgvector/pgvector) `vector` 0.8.7 | None |
+| Time-series hypertables and time bucketing | [TimescaleDB](https://github.com/timescale/timescaledb) `timescaledb` 2.31.0, Apache-only | `timescaledb` |
+| BM25 ranked full-text search | [pg_textsearch](https://github.com/timescale/pg_textsearch) 1.5.1 | `pg_textsearch` |
+| PostgreSQL full-text search | Built-in `tsvector`, `tsquery`, GIN and ranking | None |
+
+DataSketches and pgvector do not need startup preloading. Their binaries are
+already installed; `CREATE EXTENSION` enables their SQL objects in each target
+database, and PostgreSQL loads the library when used. Leaving them out of
+`preloadLibraries` does not omit them from the image or disable their features.
+
+TimescaleDB is built with `APACHE_ONLY=ON` and telemetry disabled. Its
+Timescale-Licensed components are excluded: columnstore/compression, continuous
+aggregates and TSL policy APIs are unavailable. The upstream
+[license split](https://github.com/timescale/timescaledb/blob/2.31.0/LICENSE) and
+[Timescale License](https://github.com/timescale/timescaledb/blob/2.31.0/tsl/LICENSE-TIMESCALE)
+describe the separate terms for those components, including database-service
+restrictions. This build does not grant rights to those features.
+
+Select startup libraries through `NeonDatabase.spec.preloadLibraries`, or the
+same `preloadLibraries` field in a database `PUT /v1/databases/<name>` body:
+
+```yaml
+apiVersion: neon.klustr.io/v1alpha1
+kind: NeonDatabase
+metadata:
+  name: documents
+  namespace: neon
+spec:
+  database: app
+  size: small
+  preloadLibraries: [timescaledb, anon, pg_textsearch]
+  suspend: {mode: idle, idleSeconds: 300}
+```
+
+Only these three packaged libraries are accepted; arbitrary library paths are
+rejected. Neon remains loaded. Omission keeps the existing configuration;
+`[]` selects none of the optional libraries. Branches inherit the source's
+selection when omitted. A changed selection is a compute configuration revision
+and requires a restart/reconciliation. For Compose, put the same field on the
+tenant entry in `compose/config/cluster.yaml`. Libraries do not automatically
+create database extensions or masking rules. Avoid removing a library while
+its database objects or policies still require it.
+
+After the compute has restarted, a trusted database administrator enables the
+desired extensions once in each SQL database:
+
+```sql
+CREATE EXTENSION anon;
+SELECT anon.init();  -- initialize the packaged faking datasets
+CREATE EXTENSION datasketches;
+CREATE EXTENSION vector;
+CREATE EXTENSION timescaledb;
+CREATE EXTENSION pg_textsearch;
+```
+
+Keep superuser authority with the operator; application roles do not receive it
+by selecting a library. Anonymizer requires explicit masking policies and masked
+roles; merely installing it does not anonymize data. Use its upstream
+[loading instructions](https://postgresql-anonymizer.readthedocs.io/en/stable/load/)
+and [masking documentation](https://postgresql-anonymizer.readthedocs.io/en/stable/dynamic_masking/).
+Static masking changes stored data and should only run on the intended database
+or branch. For transparent dynamic masking, configure
+`anon.transparent_dynamic_masking=on` for the target database and reconnect.
+
+Ordinary SQL then uses these capabilities directly:
+
+```sql
+CREATE TABLE documents (id bigint PRIMARY KEY, body text, embedding vector(3));
+CREATE INDEX documents_fts ON documents USING gin (to_tsvector('english', body));
+CREATE INDEX documents_bm25 ON documents USING bm25 (body) WITH (text_config='english');
+CREATE INDEX documents_vectors ON documents USING hnsw (embedding vector_cosine_ops);
+SELECT id FROM documents WHERE to_tsvector('english', body) @@ websearch_to_tsquery('english', 'database');
+SELECT id FROM documents ORDER BY body <@> 'database search' LIMIT 10;
+SELECT id FROM documents ORDER BY embedding <=> '[0.1,0.2,0.3]' LIMIT 10;
+SELECT hll_sketch_get_estimate(hll_sketch_build(id)) FROM documents;
+
+CREATE TABLE measurements (time timestamptz NOT NULL, value double precision);
+SELECT create_hypertable('measurements', by_range('time'));
+SELECT time_bucket(INTERVAL '1 hour', time), avg(value)
+FROM measurements GROUP BY 1;
+```
+
+These extensions run inside compute and do not keep a separate search/vector
+service alive. Stored objects follow the database's WAL, history and branches.
+Background maintenance stops while compute is suspended; choose `mode: never`
+when scheduled database work must run continuously. Budget memory and worker
+slots for the selected workload, including index builds. Selecting TimescaleDB
+defaults `max_worker_processes` to 32 to leave slots for Neon and TimescaleDB;
+an explicit provider setting can override that budget. Basic image checks
+cover operations and restart; production load, multi-zone recovery and each
+extension's interaction with your policies still need workload qualification.
+
 ## Docker Compose
 
 Compose remains a single-host integration path with compute-only suspension.

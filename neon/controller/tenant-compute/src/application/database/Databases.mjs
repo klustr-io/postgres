@@ -3,6 +3,7 @@ import {NormalizeClusterConfiguration as normalizeConfiguration} from '../../dom
 import {AlwaysOn as alwaysOn} from '../../domain/compute/Activity.mjs';
 import {BranchSource as branchSource, DomainProblem as problem, ResourceName as resourceName} from '../../domain/recovery/RecoveryPolicy.mjs';
 import {DatabaseDefinition, DatabaseFields as allowed} from '../../domain/database/DatabaseDefinition.mjs';
+import {ApplyDatabaseCatalog} from '../../domain/database/DatabaseCatalog.mjs';
 import {RequireServingFleet} from '../../domain/fleet/FleetPolicy.mjs';
 import {NativeOAuthRevision} from '../../domain/identity/NativeOAuthPolicy.mjs';
 
@@ -179,6 +180,10 @@ export class Databases {
       tenant.tenantId = ancestor.tenantId;
       tenant.tier = ancestor.tier; tenant.shards = ancestor.shards;
       tenant.backup = ancestor.backup;
+      if (resource.spec.preloadLibraries === undefined && ancestor.preloadLibraries !== undefined) {
+        tenant.preloadLibraries = [...ancestor.preloadLibraries];
+        ApplyDatabaseCatalog(tenant, base);
+      }
       tenant.storagePolicy = ancestor.storagePolicy;
   }
   /**

@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {parse} from '../../../controller/tenant-compute/node_modules/yaml/dist/index.js';
 import grpc from '../../../controller/tenant-compute/node_modules/@grpc/grpc-js/build/src/index.js';
 import {KedaProtocol as protocol, KedaScalerInit as startScaler} from '../../../controller/tenant-compute/src/infrastructure/keda/KedaScaler.mjs';
 import {ManagedDatabasesInit} from '../../../controller/tenant-compute/src/composition/ManagedDatabasesInit.mjs';
@@ -28,6 +30,25 @@ test('Selecting a larger size updates CPU, memory and PostgreSQL buffers togethe
   assert.equal(tenant.resources.limits.cpu, '2'); assert.equal(tenant.resources.limits.memory, '4Gi');
   assert.equal(tenant.settings.find(option => option.name === 'shared_buffers').value, '1GB');
   assert.throws(() => databases.tenant({...resource, spec: {...resource.spec, nodeName: 'attacker'}}, databases.base()), /Unsupported tenant field/);
+});
+
+test('Packaged library choices flow from database policy into native compute settings', () => {
+  const databases = manager(), base = databases.base();
+  const resource = {metadata: {name: 'events'}, spec: {preloadLibraries: ['pg_textsearch', 'anon', 'timescaledb']}};
+  const tenant = databases.tenant(resource, base);
+  assert.equal(tenant.settings.find(option => option.name === 'shared_preload_libraries').value, 'neon,timescaledb,anon,pg_textsearch');
+  assert.equal(tenant.settings.find(option => option.name === 'max_worker_processes').value, '32');
+  assert.equal(tenant.suspend.mode, 'idle');
+  const schema = parse(fs.readFileSync('neon/packaging/kubernetes/keda/database-crd.yaml', 'utf8'))
+    .spec.versions[0].schema.openAPIV3Schema.properties.spec.properties.preloadLibraries;
+  assert.equal(schema.uniqueItems, true);
+  assert.deepEqual([...schema.items.enum].sort(), [...resource.spec.preloadLibraries].sort());
+  const cleared = {...resource, spec: {preloadLibraries: []}}, plain = databases.tenant(cleared, base);
+  assert.equal(plain.settings.find(option => option.name === 'shared_preload_libraries').value, 'neon');
+  assert.notEqual(databases.revision(resource, tenant, base), databases.revision(cleared, plain, base));
+  for (const preloadLibraries of ['anon', ['../untrusted'], ['anon', 'anon']]) {
+    assert.throws(() => databases.tenant({...resource, spec: {preloadLibraries}}, base), /Invalid packaged preload libraries/);
+  }
 });
 test('Quiet SQL does not bypass the KEDA cooldown or repeatedly stop a desired running database', async () => {
   const databases = manager(); let stops = 0;

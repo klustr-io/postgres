@@ -53,7 +53,7 @@ impl UserFacingError for PostgresError {
                         || msg.starts_with("unsupported startup parameter in options: ")
                     {
                         format!(
-                            "{msg}. Please use unpooled connection or remove this parameter from the startup package. More details: https://neon.tech/docs/connect/connection-errors#unsupported-startup-parameter"
+                            "{msg}. Please use an unpooled connection or remove this parameter from the startup packet. More details: https://klustr.io/docs/neon/connection-errors#unsupported-startup-parameter"
                         )
                     } else {
                         msg.to_owned()

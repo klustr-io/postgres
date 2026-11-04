@@ -25,6 +25,7 @@
  * @property {string[]} [allowedIps] - Client network allowlist.
  * @property {number} [shards] - Storage shard count.
  * @property {number} [replicas] - Requested compute count, zero or one.
+ * @property {string[]} [preloadLibraries] - Packaged TimescaleDB, Anonymizer and BM25 startup libraries; enabled per SQL database separately.
  * @property {'active' | 'suspended' | 'retired'} [lifecycle] - Operator lifecycle state.
  * @property {'Retain' | 'Delete'} [deletionPolicy] - Explicit data retention intent.
  * @property {import('../recovery/RecoveryPolicy.mjs').BranchSelection} [branchFrom] - Immutable branch source.

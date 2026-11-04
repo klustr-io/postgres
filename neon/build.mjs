@@ -76,6 +76,25 @@ try{
     record.status='TOOLCHAIN-BUILD-PASS';record.completed_at=new Date().toISOString();save();
     console.log(JSON.stringify({status:record.status,toolchain:record.toolchain,output},null,2));process.exit(0);
   }
+  const extensions=read('neon/packaging/neon/extensions.lock.json');
+  const extensionInputs=path.join(output,'extensions');fs.mkdirSync(extensionInputs);
+  for(const source of extensions.sources){
+    const destination=path.join(extensionInputs,source.archive),cached=path.join('build/extension-inputs',source.archive);
+    if(fs.existsSync(cached))fs.copyFileSync(cached,destination);
+    else if(source.repository){
+      const checkout=path.join(extensionInputs,source.name+'-source');
+      run('git',['init',checkout]);
+      const gitCheckout=['-c','safe.directory='+fs.realpathSync(checkout).replaceAll('\\','/'),
+        '-c','core.autocrlf=false','-c','tar.umask=0022','-C',checkout];
+      run('git',[...gitCheckout,'fetch','--depth=1',source.repository,source.revision]);
+      assert.equal(run('git',[...gitCheckout,'rev-parse','FETCH_HEAD']).trim(),source.revision);
+      run('git',[...gitCheckout,'archive','--format=tar','--output='+destination,'FETCH_HEAD']);
+      assert.equal(path.dirname(fs.realpathSync(checkout)),fs.realpathSync(extensionInputs));
+      fs.rmSync(fs.realpathSync(checkout),{recursive:true});
+    }else run(process.platform==='win32'?'curl.exe':'curl',['--fail','--location','--silent','--show-error','--max-time','180','--output',destination,source.url]);
+    assert.equal(hash(fs.readFileSync(destination)),source.sha256,'Extension dependency hash mismatch: '+source.name);
+  }
+  record.extensions=extensions;save();
   // This also lets a container-driver builder use the exact local toolchain.
   const toolchainArchive=path.join(output,'toolchain.tar'),toolchainLayout=path.join(output,'toolchain');
   run(docker,['image','save','--output',toolchainArchive,identity.Id]);fs.mkdirSync(toolchainLayout);
@@ -85,6 +104,7 @@ try{
   for(const name of fs.readdirSync(path.join(toolchainLayout,'blobs/sha256')))
     assert.equal(hash(fs.readFileSync(path.join(toolchainLayout,'blobs/sha256',name))),name);
   const sourceArgs=['--build-context',`build-toolchain=oci-layout://${toolchainLayout.replaceAll('\\','/')}@${identity.Id}`,
+    '--build-context','extension-inputs='+extensionInputs,
     '--build-arg','TOOLCHAIN_IMAGE=build-toolchain','--build-arg','BUILD_JOBS='+jobs,
     '--build-arg','SOURCE_REVISION='+record.base_commit,
     '--build-arg','RUST_CACHE_NAMESPACE='+(process.env.NEON_RUST_CACHE_NAMESPACE||'neon-monorepo'),
@@ -104,6 +124,15 @@ try{
     build(role,[...sourceArgs,'--target',role,'--load','--tag',tag,context]);
     const image=JSON.parse(run(docker,['image','inspect',tag]))[0];assert.equal(image.Config.User,'10001:10001');
     record.images[role]={tag,image_id:image.Id};save();
+    if(role==='compute'){
+      const fd=fs.openSync(path.join(output,'compute-extensions.log'),'w');
+      try{run(docker,['run','--rm','--network','none','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges',
+        '--tmpfs','/tmp:rw,size=512m,uid=10001,gid=10001','--shm-size','256m','--env','PGUSER=neon','--env','USER=neon',
+        '--mount',`type=bind,source=${path.join(context,'neon/tests/neon/smoke')},target=/smoke,readonly`,
+        '--entrypoint','/bin/sh',image.Id,'/smoke/check_minimal_postgres.sh'],{stdio:['ignore',fd,fd]});}
+      finally{fs.closeSync(fd);}
+      record.images[role].extensions_smoke='PASS';save();
+    }
   }
   const tag=`klustr-neon-tenant-controller:${version}`;
   build('tenant-controller',['--build-arg','SOURCE_REVISION='+record.base_commit,'--file',path.join(context,'neon/packaging/docker/neon/runtime/Dockerfile.tenant-controller'),'--load','--tag',tag,context]);

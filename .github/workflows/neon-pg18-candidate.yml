@@ -3,7 +3,7 @@ on:
   pull_request:
     branches: [REL_18_STABLE_neon, main]
   push:
-    branches: [REL_18_STABLE_neon, main]
+    branches: [REL_18_STABLE_neon, main, 'release/**']
     tags: ['neon-v18.*']
   workflow_dispatch:
     inputs:

@@ -42,6 +42,16 @@ spec:
             spec:
               type: object
               properties:
+                preloadLibraries:
+                  type: array
+                  maxItems: 3
+                  uniqueItems: true
+                  items:
+                    type: string
+                    enum:
+                      - timescaledb
+                      - anon
+                      - pg_textsearch
                 identity:
                   type: object
                   required:

@@ -14,15 +14,18 @@ Kubernetes tenant/compute controller. The current release candidate is
 are configured through the management API and Kubernetes resources.
 Customer-owned [enterprise fleets and OIDC](DEPLOY.md#enterprise-fleets-and-oidc)
 add namespace-scoped provisioning, short-lived database logins and zone placement.
+Source builds also package [Anonymizer, DataSketches, vectors, TimescaleDB and BM25](DEPLOY.md#packaged-postgresql-extensions),
+alongside PostgreSQL's built-in full-text search.
 The source update also supports configurable [native PG18 OAuth login](DEPLOY.md#native-postgresql-18-oauth-login)
 through the proxy and an installed token validator. It requires matching rebuilt
 compute, proxy and controller images; the older RC5 digests do not include it.
 
 ## Published images
 
-GitHub Actions builds these images from the tagged source and publishes them to GHCR.
+GitHub Actions builds these images from release-branch pushes and tagged source,
+then publishes the coordinated seven-image set to GHCR as `sha-<commit>`.
 The [controller workflow](https://github.com/klustr-io/postgres/actions/workflows/neon-controller.yml)
-also publishes source-tagged controller updates independently; deployment YAML pins
+also publishes independent `controller-sha-<commit>` development updates; deployment YAML pins
 the newer KEDA controller described in [DEPLOY.md](DEPLOY.md).
 
 | Component | Registry repository |

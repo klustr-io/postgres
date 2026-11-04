@@ -169,6 +169,7 @@ for role, executable in roles.items():
     shutil.copy2('/source/NOTICE', licenses / 'runtime-NOTICE')
     shutil.copy2('/pgsource/v18/COPYRIGHT', licenses / 'postgresql-COPYRIGHT')
     shutil.copytree('/out/licenses/native', licenses / 'native', dirs_exist_ok=True)
+    shutil.copytree('/out/licenses/extensions', licenses / 'extensions', dirs_exist_ok=True)
 
     status_dir = root / 'var/lib/dpkg/status.d'
     status_dir.mkdir(parents=True, exist_ok=True)
@@ -213,6 +214,15 @@ for role, executable in roles.items():
         'serialNumber': 'urn:uuid:' + str(uuid.uuid5(uuid.NAMESPACE_URL, role + json.dumps(native, sort_keys=True))),
         'components': native_components}
     (metadata / 'qualification/native-libraries.cdx.json').write_text(json.dumps(sbom, indent=2) + '\n')
+    extensions = json.loads(Path('/out/qualification/extensions/extensions.lock.json').read_text())
+    extension_sbom = {'bomFormat': 'CycloneDX', 'specVersion': '1.6', 'version': 1,
+        'components': [{'type': 'library', 'name': source['name'], 'version': source['version'],
+            'purl': f"pkg:generic/{source['name']}@{source['version']}",
+            'licenses': [{'license': {'id': source['license']}}],
+            'hashes': [{'alg': 'SHA-256', 'content': source['sha256']}],
+            'externalReferences': [{'type': 'distribution', 'url': source.get('url', source.get('repository'))}]}
+            for source in extensions['sources']] if role in ('compute', 'pageserver') else []}
+    (metadata / 'qualification/extensions.cdx.json').write_text(json.dumps(extension_sbom, indent=2) + '\n')
     assert not (root / 'usr/bin/infocmp').exists() and not base_file('/usr/bin/infocmp'), \
         'An affected ncurses CLI must not enter the minimal runtime'
     print(f'Collected {role}: {len(copied)} additional files and {len(installed)} Debian library/tool packages', flush=True)

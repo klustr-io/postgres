@@ -1,8 +1,9 @@
 import {isDeepStrictEqual} from 'node:util';
 import {ResourceName, DomainProblem, RecoveryPolicy} from '../recovery/RecoveryPolicy.mjs';
+import {DatabasePreloadLibraries} from './DatabaseCatalog.mjs';
 /** Allowed explicit database policy fields; physical placement remains provider-owned. @type {ReadonlyArray<string>} */
 export const DatabaseFields = Object.freeze(['database', 'user', 'size', 'tier', 'profile', 'suspend', 'databasePolicies',
-  'allowedIps', 'shards', 'replicas', 'lifecycle', 'deletionPolicy', 'backup', 'branchFrom', 'identity']);
+  'allowedIps', 'shards', 'replicas', 'lifecycle', 'deletionPolicy', 'backup', 'branchFrom', 'identity', 'preloadLibraries']);
 /**
  * @typedef {Object} DatabaseDefinitionInput
  * @property {string} name - Immutable resource name.
@@ -28,6 +29,7 @@ export class DatabaseDefinition {
     if (!['active', 'suspended', 'retired'].includes(spec.lifecycle || 'active') || !['Retain', 'Delete'].includes(spec.deletionPolicy || 'Retain')) throw DomainProblem('INVALID_SPEC');
     if (spec.deletionPolicy === 'Delete' && spec.lifecycle !== 'retired') throw DomainProblem('INVALID_SPEC');
     RecoveryPolicy(spec.backup);
+    DatabasePreloadLibraries(spec.preloadLibraries);
     if (spec.identity) this.#validateIdentity(spec.identity);
   }
   #validateIdentity(identity) {

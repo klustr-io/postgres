@@ -20,6 +20,22 @@ USER 10002:10002
 RUN make -C /pgbuild/monorepo -j${BUILD_JOBS} check
 USER root
 
+FROM engine AS extensions
+RUN apt-get -o Acquire::Retries=3 update \
+    && apt-get -o Acquire::Retries=3 install -y --no-install-recommends libboost-dev \
+    && rm -rf /var/lib/apt/lists/*
+ENV RUSTUP_TOOLCHAIN=1.99.1
+RUN rustup toolchain install ${RUSTUP_TOOLCHAIN} --profile minimal
+COPY neon/packaging/neon/extensions.lock.json /extension-build/extensions.lock.json
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=shared \
+    cargo install --locked --version 0.19.3 cargo-pgrx
+COPY --from=extension-inputs / /extension-archives/
+COPY neon/packaging/neon/anonymizer/Cargo.lock /extension-build/anonymizer.Cargo.lock
+COPY neon/packaging/neon/build-extensions.sh /extension-build/build-extensions.sh
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=shared \
+    --mount=type=cache,id=neon-pg18-anonymizer,target=/extension-target,sharing=locked \
+    BUILD_JOBS=${BUILD_JOBS} sh /extension-build/build-extensions.sh
+
 FROM engine AS artifacts
 RUN if [ -d /out/qualification/native ]; then mv /out/qualification/native /tmp/native-provenance; fi \
     && rm -rf /out/qualification && mkdir -p /out/qualification \
@@ -59,6 +75,9 @@ RUN rm -rf /out/qualification/runtime-tests \
     && strip --strip-unneeded /out/bin/* /opt/postgres/v18/bin/postgres /opt/postgres/v18/lib/neon*.so /opt/postgres/v18/lib/klustr_oauth.so \
     && sha256sum /out/bin/* > /out/qualification/binaries.sha256 \
     && sha256sum /opt/postgres/v18/bin/postgres /opt/postgres/v18/lib/neon*.so /opt/postgres/v18/lib/klustr_oauth.so > /out/qualification/postgres-binaries.sha256
+COPY --from=extensions /extension-install/opt/postgres/v18/ /opt/postgres/v18/
+COPY --from=extensions /extension-qualification/ /out/qualification/extensions/
+COPY --from=extensions /extension-licenses/ /out/licenses/extensions/
 COPY neon/sources.json /out/qualification/sources.json
 COPY neon/build-inputs.json /out/qualification/build-inputs.json
 COPY neon/packaging/neon/native-dependencies.lock.json /out/qualification/native-dependencies.lock.json
@@ -81,6 +100,7 @@ LABEL org.opencontainers.image.source="https://github.com/klustr-io/postgres" \
       io.klustr.release-status="single-checkout-source-candidate"
 FROM runtime AS compute
 LABEL io.klustr.native-oauth="OAUTHBEARER/klustr_oauth"
+LABEL io.klustr.postgresql-extensions="anon,datasketches,vector,timescaledb,pg_textsearch"
 COPY --from=roots /rootfs/compute/ /
 EXPOSE 5432 3080
 ENTRYPOINT ["/usr/local/bin/compute_ctl"]

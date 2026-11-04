@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "postgresql_major": 18,
+  "rust_toolchain": "1.99.1",
+  "pgrx_version": "0.19.3",
+  "timescaledb_build": "APACHE_ONLY",
+  "sources": [
+    {
+      "name": "postgresql-anonymizer",
+      "version": "3.3.2",
+      "archive": "postgresql-anonymizer-3.3.2.tar",
+      "repository": "https://gitlab.com/dalibo/postgresql_anonymizer.git",
+      "revision": "83b387455811ee3643179894f9af35fcc1be536a",
+      "sha256": "adeeaa8c629c42122327e778d584349612cf2c1e12b235df6e6f57ceac417ace",
+      "license": "PostgreSQL"
+    },
+    {
+      "name": "datasketches",
+      "version": "1.7.0",
+      "archive": "datasketches-postgresql-1.7.0.tar.gz",
+      "url": "https://codeload.github.com/apache/datasketches-postgresql/tar.gz/91cbd54c70abba9bf2487c33006e35cfd32ed171",
+      "sha256": "5ab1a53d7c0800b69ac079f9e816d3121e7a81734b4a69d808b850297b9d2cba",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "datasketches-cpp",
+      "version": "5.2.0",
+      "archive": "datasketches-cpp-5.2.0.tar.gz",
+      "url": "https://codeload.github.com/apache/datasketches-cpp/tar.gz/de8553ba372e618382c2e7b44b0ffc9422b9458c",
+      "sha256": "ae9d48a43acc6183f3be021585c9a42ec1cf42a6d8d86e224f716ec43d223295",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "pgvector",
+      "version": "0.8.7",
+      "archive": "pgvector-0.8.7.tar.gz",
+      "url": "https://codeload.github.com/pgvector/pgvector/tar.gz/f37c13f68b57d2c3472b2214fbcff699d6d34876",
+      "sha256": "83d673c3b287cddbf3879f86215f043f2c2b56c69d37b2a77504910db1ed6e56",
+      "license": "PostgreSQL"
+    },
+    {
+      "name": "timescaledb",
+      "version": "2.31.0",
+      "archive": "timescaledb-2.31.0.tar.gz",
+      "url": "https://codeload.github.com/timescale/timescaledb/tar.gz/4fa2a7c6b579171a1a8966fd87a0d4189ebab43b",
+      "sha256": "a5710c0232e7faf393ce618957ed7ff9e7fe4dd0cb1875938751816a5c7ec9a9",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "pg_textsearch",
+      "version": "1.5.1",
+      "archive": "pg_textsearch-v1.5.1.tar.gz",
+      "url": "https://codeload.github.com/timescale/pg_textsearch/tar.gz/fa142d049d08eac45a263f5abc250c8877ae076e",
+      "sha256": "445a546810cbc17e15d05ff8a391f1b693eab382a2ef6efbf72e1c37fa0c48d0",
+      "license": "PostgreSQL"
+    }
+  ],
+  "anonymizer_cargo_lock_sha256": "2a30c53c32de09d29aed744677dab082396ff6c91c27664fbe32d3b1117b0e42"
+}

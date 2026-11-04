@@ -26,6 +26,18 @@ Library/package downloads are pinned build dependencies; application sources are
 in this checkout. GitHub builds and publication are described in the
 [root README](../README.md) and [release notes](RELEASE-NOTES.md).
 
+Third-party extensions are compiled against the same PG18 headers from
+[`extensions.lock.json`](packaging/neon/extensions.lock.json): Anonymizer,
+DataSketches, pgvector, Apache-only TimescaleDB and `pg_textsearch` BM25.
+The checked-in Anonymizer Cargo lock corrects its upstream package-version
+mismatch while keeping every dependency version unchanged. Git dependency
+archives use fixed file modes and LF line endings on both Windows and Linux.
+The build checks source hashes and retains licenses, the Anonymizer Cargo lock,
+installed-file checksums and an extension SBOM in the images. It tests the final
+nonroot compute image with no network using disposable tmpfs, including masking,
+sketches, indexed search, vectors, hypertables and a restart. See
+[activation and configuration](../DEPLOY.md#packaged-postgresql-extensions).
+
 Use `--plan` to inspect inputs without compiling. Default local tags use
 `18.6-dev`; set `--version=18.6-source.4` for a named build.
 `--toolchain-image=<immutable-image-id>` explicitly reuses

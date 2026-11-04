@@ -168,6 +168,7 @@ output('../kubernetes/base/kustomization.yaml', {apiVersion: 'kustomize.config.k
   resources: ['namespace.yaml', 'cluster.yaml', 'bootstrap.yaml', 'storage.yaml', 'controller.yaml']});
 
 const databaseSchema = {type: 'object', properties: {
+  preloadLibraries: {type: 'array', maxItems: 3, uniqueItems: true, items: {type: 'string', enum: ['timescaledb', 'anon', 'pg_textsearch']}},
   identity: {type: 'object', required: ['tenant', 'project'], properties: {
     tenant: {type: 'string', pattern: '^[a-z][a-z0-9-]{0,62}$'}, project: {type: 'string', pattern: '^[a-z][a-z0-9-]{0,62}$'}}},
   lifecycle: {type: 'string', enum: ['active', 'suspended', 'retired'], default: 'active'},
