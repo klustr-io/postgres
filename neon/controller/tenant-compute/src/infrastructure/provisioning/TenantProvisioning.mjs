@@ -173,7 +173,7 @@ const previous = fs.existsSync(path.join(state, dir, 'spec.json')) ? JSON.parse(
           {name: 'neon_lifecycle', encrypted_password: previous?.cluster.roles.find(role => role.name === 'neon_lifecycle')?.encrypted_password || scram(read(dir + '/admin-password')), options: [{name: 'SUPERUSER', value: null, vartype: 'string'}]}],
         databases: [{name: tenant.database, owner: tenant.user, options: []}], settings: [
           ...(tenant.settings || []).filter(option => option.name !== 'shared_preload_libraries'),
-          {name: 'shared_preload_libraries', value: [...new Set(['neon', ...((tenant.settings || []).find(option => option.name === 'shared_preload_libraries')?.value || '').split(',').filter(Boolean)])].join(','), vartype: 'string'}]}};
+          {name: 'shared_preload_libraries', value: [...new Set(['neon', 'pg_stat_statements', ...((tenant.settings || []).find(option => option.name === 'shared_preload_libraries')?.value || '').split(',').map(value => value.trim()).filter(Boolean)])].join(','), vartype: 'string'}]}};
     for (const key of ['pageserver_connstring', 'pageserver_connection_info', 'shard_stripe_size', 'safekeeper_connstrings', 'safekeepers_generation'])
       if (previous?.[key] !== undefined) spec[key] = previous[key];
 return spec;

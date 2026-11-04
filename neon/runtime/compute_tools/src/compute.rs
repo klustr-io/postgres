@@ -2367,43 +2367,39 @@ impl ComputeNode {
     }
 
     /// Select `pg_stat_statements` data and return it as a stringified JSON
-    pub async fn collect_insights(&self) -> String {
+    pub async fn collect_insights(&self) -> Result<String> {
         let mut result_rows: Vec<String> = Vec::new();
-        let conf = self.get_tokio_conn_conf(Some("compute_ctl:collect_insights"));
+        // Telemetry always uses the internal database and reserved role. A scrape
+        // must not increment a customer's database-session activity counters.
+        let mut conf = self.get_tokio_conn_conf(Some("compute_ctl:collect_insights"));
+        conf.dbname("postgres");
+        conf.connect_timeout(Duration::from_secs(3));
+        let options = format!(
+            "{} -c statement_timeout=3000 -c idle_in_transaction_session_timeout=3000",
+            conf.get_options().unwrap_or("")
+        );
+        conf.options(&options);
         let connect_result = conf.connect(NoTls).await;
-        let (client, connection) = connect_result.unwrap();
+        let (client, connection) = connect_result.context("connect to running compute for insights")?;
         tokio::spawn(async move {
             if let Err(e) = connection.await {
                 eprintln!("connection error: {e}");
             }
         });
         let result = client
-            .simple_query(
-                "SELECT
-    pg_catalog.row_to_json(pss)
-FROM
-    public.pg_stat_statements pss
-WHERE
-    pss.userid != 'cloud_admin'::pg_catalog.regrole::pg_catalog.oid
-ORDER BY
-    (pss.mean_exec_time + pss.mean_plan_time) DESC
-LIMIT 100",
-            )
-            .await;
+            .simple_query(include_str!("sql/collect_statement_insights.sql"))
+            .await
+            .context("read statement telemetry")?;
 
-        if let Ok(raw_rows) = result {
-            for message in raw_rows.iter() {
-                if let postgres::SimpleQueryMessage::Row(row) = message {
-                    if let Some(json) = row.get(0) {
-                        result_rows.push(json.to_string());
-                    }
+        for message in result.iter() {
+            if let postgres::SimpleQueryMessage::Row(row) = message {
+                if let Some(json) = row.get(0) {
+                    result_rows.push(json.to_string());
                 }
             }
-
-            format!("{{\"pg_stat_statements\": [{}]}}", result_rows.join(","))
-        } else {
-            "{{\"pg_stat_statements\": []}}".to_string()
         }
+
+        Ok(format!("{{\"pg_stat_statements\": [{}]}}", result_rows.join(",")))
     }
 
     // download an archive, unzip and place files in correct locations

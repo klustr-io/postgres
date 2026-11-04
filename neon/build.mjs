@@ -132,6 +132,14 @@ try{
         '--entrypoint','/bin/sh',image.Id,'/smoke/check_minimal_postgres.sh'],{stdio:['ignore',fd,fd]});}
       finally{fs.closeSync(fd);}
       record.images[role].extensions_smoke='PASS';save();
+      if(process.argv.includes('--verify-native-oauth')){
+        const report=path.join(output,'statement-telemetry.json');
+        const telemetryLog=fs.openSync(path.join(output,'statement-telemetry.log'),'w');
+        try{run(process.execPath,['neon/tests/neon/compute/statement-telemetry.mjs'],{
+          env:{...process.env,NEON_TELEMETRY_IMAGE:image.Id,NEON_TELEMETRY_REPORT_FILE:report},stdio:['ignore',telemetryLog,telemetryLog]});}
+        finally{fs.closeSync(telemetryLog);}
+        record.statement_telemetry=read(report);assert.equal(record.statement_telemetry.passed,true);save();
+      }
     }
   }
   // Bind the operator's deployment artifact to this build, rather than the

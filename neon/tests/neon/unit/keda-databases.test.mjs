@@ -36,7 +36,7 @@ test('Packaged library choices flow from database policy into native compute set
   const databases = manager(), base = databases.base();
   const resource = {metadata: {name: 'events'}, spec: {preloadLibraries: ['pg_textsearch', 'anon', 'timescaledb']}};
   const tenant = databases.tenant(resource, base);
-  assert.equal(tenant.settings.find(option => option.name === 'shared_preload_libraries').value, 'neon,timescaledb,anon,pg_textsearch');
+  assert.equal(tenant.settings.find(option => option.name === 'shared_preload_libraries').value, 'neon,pg_stat_statements,timescaledb,anon,pg_textsearch');
   assert.equal(tenant.settings.find(option => option.name === 'max_worker_processes').value, '32');
   assert.equal(tenant.suspend.mode, 'idle');
   const schema = parse(fs.readFileSync('neon/packaging/kubernetes/keda/database-crd.yaml', 'utf8'))
@@ -44,7 +44,7 @@ test('Packaged library choices flow from database policy into native compute set
   assert.equal(schema.uniqueItems, true);
   assert.deepEqual([...schema.items.enum].sort(), [...resource.spec.preloadLibraries].sort());
   const cleared = {...resource, spec: {preloadLibraries: []}}, plain = databases.tenant(cleared, base);
-  assert.equal(plain.settings.find(option => option.name === 'shared_preload_libraries').value, 'neon');
+  assert.equal(plain.settings.find(option => option.name === 'shared_preload_libraries').value, 'neon,pg_stat_statements');
   assert.notEqual(databases.revision(resource, tenant, base), databases.revision(cleared, plain, base));
   for (const preloadLibraries of ['anon', ['../untrusted'], ['anon', 'anon']]) {
     assert.throws(() => databases.tenant({...resource, spec: {preloadLibraries}}, base), /Invalid packaged preload libraries/);

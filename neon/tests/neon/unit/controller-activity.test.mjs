@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Activity,AlwaysOn as alwaysOn} from '../../../controller/tenant-compute/src/domain/compute/Activity.mjs';
-const database=(name,sessions='1',active_ms='0')=>({name,sessions,active_ms,reset:'same'});
+const database=(name,work_count='1',active_ms='0')=>({name,work_count,active_ms,reset:'same'});
 const sample=(clients=[],databases=[database('app')])=>({clients,databases,blockers:false});
 test('Five-minute policy suspends idle pooled connections only after observed SQL inactivity',()=>{
   let now=0;const tracker=new Activity(()=>now),endpoint={suspend:{mode:'idle',idleSeconds:300}};
@@ -15,6 +15,14 @@ test('Work in short-lived connections resets inactivity even when no backend rem
   tracker.observe(sample(),endpoint);now=290000;
   assert.equal(tracker.observe(sample([],[database('app','2','3')]),endpoint),false);
   now=300000;assert.equal(tracker.observe(sample([],[database('app','2','3')]),endpoint),false);
+});
+
+test('Short-lived application SQL in the internal database still resets inactivity',()=>{
+  let now=0;const tracker=new Activity(()=>now),endpoint={suspend:{mode:'idle',idleSeconds:1}};
+  tracker.observe(sample([],[database('postgres','0')]),endpoint);
+  now=900;tracker.observe(sample([],[database('postgres','1')]),endpoint);
+  now=1100;assert.equal(tracker.observe(sample([],[database('postgres','1')]),endpoint),false);
+  now=1900;assert.equal(tracker.observe(sample([],[database('postgres','1')]),endpoint),true);
 });
 test('Open transactions and active queries prevent suspension',()=>{
   let now=0;const tracker=new Activity(()=>now),endpoint={suspend:{mode:'idle',idleSeconds:1}};

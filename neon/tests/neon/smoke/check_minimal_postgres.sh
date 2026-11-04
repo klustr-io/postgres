@@ -7,7 +7,7 @@ start() {
 start
 trap 'pg_ctl -D /tmp/minimal-pg -m immediate -w stop >/dev/null 2>&1 || true' EXIT
 psql -h /tmp -d postgres -v ON_ERROR_STOP=1 <<'SQL'
-CREATE EXTENSION pg_stat_statements;
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 CREATE EXTENSION pgcrypto;
 CREATE EXTENSION xml2;
 CREATE EXTENSION anon;

@@ -6,8 +6,17 @@ import path from 'node:path';
 import {ConfigurationFile as configuration} from '../../../controller/tenant-compute/src/infrastructure/configuration/ConfigurationFile.mjs';
 import {NormalizeClusterConfiguration as normalizeConfiguration} from '../../../controller/tenant-compute/src/domain/configuration/ClusterConfiguration.mjs';
 import {SpecRouting as specRouting} from '../../../controller/tenant-compute/src/infrastructure/storage/StorageRouting.mjs';
-import {EndpointConfig as endpointConfig} from '../../../controller/tenant-compute/src/domain/compute/ComputeSpecification.mjs';
+import {EndpointConfig as endpointConfig, RenderComputeSpec} from '../../../controller/tenant-compute/src/domain/compute/ComputeSpecification.mjs';
 import {Lifecycle} from '../../../controller/tenant-compute/src/infrastructure/compute/Lifecycle.mjs';
+
+test('Managed compute always preloads statement telemetry while preserving optional libraries', () => {
+  const native = {tenant_id: 'tenant', timeline_id: 'timeline', safekeeper_connstrings: ['storage:5454'],
+    storage_auth_token: 'fixture', cluster: {roles: [], settings: [{name: 'shared_preload_libraries', value: 'neon,anon', vartype: 'string'}]}};
+  const rendered = RenderComputeSpec(native, {profile: 'durable'});
+  assert.equal(rendered.cluster.settings.find(option => option.name === 'shared_preload_libraries').value, 'neon,pg_stat_statements,anon');
+  assert.equal(native.cluster.settings[0].value, 'neon,anon');
+  assert.equal(rendered.cluster.settings.find(option => option.name === 'compute_query_id').value, 'on');
+});
 
 test('Deployment config uses stable tenant identities and accepts normal SQL role names', () => {
   const base = configuration('neon/packaging/compose/config/cluster.yaml');

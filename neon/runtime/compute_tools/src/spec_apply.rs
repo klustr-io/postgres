@@ -28,7 +28,7 @@ use crate::spec_apply::ApplySpecPhase::{
     RenameAndDeleteDatabases, RenameRoles, RunInEachDatabase,
 };
 use crate::spec_apply::PerDatabasePhase::{
-    ChangeSchemaPerms, DeleteDBRoleReferences, DropLogicalSubscriptions,
+    ChangeSchemaPerms, CreatePgStatStatements, DeleteDBRoleReferences, DropLogicalSubscriptions,
 };
 
 impl ComputeNode {
@@ -260,6 +260,7 @@ impl ComputeNode {
                     let mut phases = vec![
                         DeleteDBRoleReferences,
                         ChangeSchemaPerms,
+                        CreatePgStatStatements,
                     ];
 
                     if spec.drop_subscriptions_before_start && !drop_subscriptions_done {
@@ -508,6 +509,7 @@ impl Debug for DB {
 pub enum PerDatabasePhase {
     DeleteDBRoleReferences,
     ChangeSchemaPerms,
+    CreatePgStatStatements,
     /// This is a shared phase, used for both i) dropping dangling LR subscriptions
     /// before dropping the DB, and ii) dropping all subscriptions after creating
     /// a fresh branch.
@@ -1107,6 +1109,18 @@ async fn get_operations<'a>(
 
                     Ok(Box::new(operations))
                 }
+                PerDatabasePhase::CreatePgStatStatements => {
+                    if spec.cluster.settings.find("shared_preload_libraries")
+                        .is_some_and(|libs| libs.split(',').any(|lib| lib.trim() == "pg_stat_statements"))
+                    {
+                        Ok(Box::new(once(Operation {
+                            query: String::from(include_str!("sql/create_statement_telemetry.sql")),
+                            comment: Some(String::from("enable per-database statement telemetry")),
+                        })))
+                    } else {
+                        Ok(Box::new(empty()))
+                    }
+                }
                 PerDatabasePhase::ChangeSchemaPerms => {
                     let db = match &db {
                         // ignore schema permissions on the system database
@@ -1136,15 +1150,13 @@ async fn get_operations<'a>(
                 }
             }
         }
-        // Interestingly, we only install p_s_s in the main database, even when
-        // it's preloaded.
+        // Retain the idempotent system-database step; user databases also enable
+        // statement telemetry in the per-database phase above.
         ApplySpecPhase::HandleOtherExtensions => {
             if let Some(libs) = spec.cluster.settings.find("shared_preload_libraries") {
                 if libs.contains("pg_stat_statements") {
                     return Ok(Box::new(once(Operation {
-                        query: String::from(
-                            "CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA public",
-                        ),
+                        query: String::from(include_str!("sql/create_statement_telemetry.sql")),
                         comment: Some(String::from("create system extensions")),
                     })));
                 }

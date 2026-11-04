@@ -372,9 +372,22 @@ export class Lifecycle {
    * @throws {Error} On SQL observation failure.
    */
   async activitySample(client){
-    const result=await client.query(`SELECT json_build_object(
-      'databases',(SELECT coalesce(json_agg(json_build_object('name',datname,'sessions',sessions::text,
-        'active_ms',active_time::text,'reset',stats_reset::text)),'[]'::json) FROM pg_stat_database WHERE datname NOT IN ('template0','template1')),
+    // Only the internal postgres database hosts owned SQL telemetry. Its global
+    // session counters include each scrape, so use role-bound statement counters
+    // there. Customer database counters still catch all short-lived connections.
+    const result=await client.query(`WITH internal_work AS (
+      SELECT coalesce(sum(calls),0)::text AS calls,
+        coalesce(sum(total_exec_time+total_plan_time),0)::text AS active_ms
+      FROM public.pg_stat_statements(false) WHERE dbid=(SELECT oid FROM pg_database WHERE datname='postgres')
+        AND userid NOT IN (SELECT oid FROM pg_roles WHERE rolname IN ('cloud_admin','neon_lifecycle'))
+    ) SELECT json_build_object(
+      'databases',(SELECT coalesce(json_agg(json_build_object('name',datname,
+        'work_count',CASE WHEN datname='postgres' THEN internal_work.calls ELSE sessions::text END,
+        'active_ms',CASE WHEN datname='postgres' THEN internal_work.active_ms ELSE active_time::text END,
+        'reset',CASE WHEN datname='postgres' THEN concat(d.stats_reset::text,'/',info.stats_reset::text,'/',info.dealloc::text)
+          ELSE d.stats_reset::text END)),'[]'::json)
+        FROM pg_stat_database d CROSS JOIN internal_work CROSS JOIN public.pg_stat_statements_info info
+        WHERE datname NOT IN ('template0','template1')),
       'clients',(SELECT coalesce(json_agg(json_build_object('pid',pid,'database',datname,'state',state,
         'change',state_change::text)),'[]'::json) FROM pg_stat_activity WHERE backend_type='client backend'
         AND pid<>pg_backend_pid() AND NOT (usename=current_user AND application_name='neon-lifecycle-controller')

@@ -1198,6 +1198,50 @@ when a public help page has not yet been published.
 
 ## Packaged PostgreSQL extensions
 
+### Statement metrics and idle-safe telemetry
+
+Managed compute always preloads `neon,pg_stat_statements`, with query identifiers
+enabled and top-level/utility statement tracking. Native compute startup runs
+`CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA public` in each
+connectable database declared in its compute specification and in the internal
+`postgres` database. No application bootstrap SQL is required for those databases.
+Changing optional `preloadLibraries`, including `[]`, retains this mandatory
+baseline. Existing deployments need the matching updated compute and controller
+images and a normal managed compute restart; the controller never wakes a dormant
+database merely to install telemetry. SQL-created databases outside the managed
+specification follow normal PostgreSQL per-database extension activation.
+
+Collect through the private compute-control HTTP listener on port 3080:
+
+- `GET /metrics` exports the compute process's Prometheus metrics.
+- `GET /insights` exports up to 100 statement records, ordered by mean execution
+  plus planning time, and excludes the reserved internal roles. Use the configured
+  compute-control authorization and keep this SQL-text-bearing endpoint private.
+  The handler requires running PostgreSQL; it cannot wake or start compute.
+
+Discover only existing running compute Pods/containers. When a database is
+suspended, stop SQL collection and serve previously exported history from your
+external metrics store. Keep the compute-control listener behind the existing
+private-network policy; grant only the chosen collector access. Do not scrape
+through the customer PostgreSQL proxy, call `/wake_compute`, or send synthetic
+customer SQL to collect metrics: those paths represent application demand and
+can wake or retain compute.
+
+Internal insights connections use the reserved role in `postgres`. Idle detection
+excludes their sessions and statement counters while preserving real application
+activity, including short-lived customer queries in `postgres`. Ignoring telemetry
+is bound to internal SQL identity; an application cannot opt out of idle detection
+by changing `application_name`. Customer database session/activity counters remain
+part of idle detection. Missing statistics fail closed, retaining running compute
+rather than guessing that it is safe to suspend.
+
+Statement counters can reset on compute replacement, statistics reset or entry
+eviction. Retain exported telemetry outside the sleeping database. Ordinary SQL
+reads of `pg_stat_statements` through a customer's database connection remain
+normal application work and affect its idle timer.
+
+### Optional extension capabilities
+
 The source build installs the following into compute and pageserver images;
 no extension download service or package manager is needed at runtime. Older
 published RC5 and `fa67859` images do not contain these additions. Build a new
@@ -1243,8 +1287,8 @@ spec:
   suspend: {mode: idle, idleSeconds: 300}
 ```
 
-Only these three packaged libraries are accepted; arbitrary library paths are
-rejected. Neon remains loaded. Omission keeps the existing configuration;
+Only these three optional packaged libraries are accepted; arbitrary library paths are
+rejected. Neon and `pg_stat_statements` remain loaded. Omission keeps the existing configuration;
 `[]` selects none of the optional libraries. Branches inherit the source's
 selection when omitted. A changed selection is a compute configuration revision
 and requires a restart/reconciliation. For Compose, put the same field on the

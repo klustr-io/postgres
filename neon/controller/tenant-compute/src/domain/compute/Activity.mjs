@@ -17,7 +17,7 @@
 /**
  * @typedef {Object} DatabaseActivitySample
  * @property {string} name - SQL database observed by the activity monitor.
- * @property {number | string} sessions - Cumulative observed user-session counter.
+ * @property {number | string} work_count - Application session/statement counter, excluding owned telemetry in the internal database.
  * @property {number | string} active_ms - Cumulative active SQL milliseconds.
  * @property {string | null} reset - Statistics reset identity used to detect counter changes.
  */
@@ -63,7 +63,7 @@ export function AlwaysOn(endpoint){
     Object.values(endpoint.databasePolicies||{}).some(value=>SuspendPolicy(value).mode==='never');
 }
 // Monotonic observation times avoid early suspension when a worker clock moves.
-// Database sessions/active_time catch work in connections shorter than a poll.
+// Application counters catch work in connections shorter than a poll.
 /** Track monotonic SQL inactivity without losing work from short-lived connections. */
 export class Activity {
   #databases=new Map();
@@ -82,8 +82,7 @@ export class Activity {
     for(const database of sample.databases){
       const clients=sample.clients.filter(client=>client.database===database.name);
       const busy=clients.some(client=>client.state!=='idle');
-      const fingerprint=JSON.stringify([database.sessions,database.reset,
-        database.name==='postgres'?null:database.active_ms,
+      const fingerprint=JSON.stringify([database.work_count,database.reset,database.active_ms,
         clients.map(client=>[client.pid,client.change,client.state]).sort((a,b)=>a[0]-b[0])]);
       let previous=this.#databases.get(database.name);
       if(!previous||previous.fingerprint!==fingerprint||busy||sample.blockers)

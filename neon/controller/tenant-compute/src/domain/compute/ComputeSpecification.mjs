@@ -149,7 +149,9 @@ export function RenderComputeSpec(input,endpoint){
   if(!spec.tenant_id||!spec.timeline_id||!spec.safekeeper_connstrings?.length||!spec.storage_auth_token)throw Error('Incomplete authenticated storage spec');
   if(!spec.cluster||!Array.isArray(spec.cluster.roles))throw Error('Incomplete compute cluster spec');
   // Built-in upstream compute configuration; application SQL remains untouched.
-  const settings={listen_addresses:'*',port:'5432',ssl:'on',ssl_cert_file:'/run/compute-tls/tls.crt',
+  const settings={shared_preload_libraries:ComputePreloadLibraries(spec.cluster),
+    compute_query_id:'on','pg_stat_statements.track':'top','pg_stat_statements.track_utility':'on',
+    listen_addresses:'*',port:'5432',ssl:'on',ssl_cert_file:'/run/compute-tls/tls.crt',
     ssl_key_file:'/run/compute-tls/tls.key',full_page_writes:'on',wal_compression:'zstd',
     fsync:endpoint.profile==='durable'?'on':'off',synchronous_commit:endpoint.profile==='durable'?'on':'off',
     'neon.bounded_async_commit':'on','neon.bounded_async_max_age':'750ms','neon.bounded_async_max_wal':'64MB',
@@ -161,4 +163,9 @@ export function RenderComputeSpec(input,endpoint){
   spec.cluster.settings.push(...Object.entries(settings).map(([name,value])=>({name,value,vartype:'string'})));
   spec.suspend_timeout_seconds=-1; // This controller owns suspension; no second idle actor.
   return spec;
+}
+
+function ComputePreloadLibraries(cluster){
+  const libraries=(cluster.settings||[]).find(option=>option.name==='shared_preload_libraries')?.value||'';
+  return [...new Set(['neon','pg_stat_statements',...libraries.split(',').map(value=>value.trim()).filter(Boolean)])].join(',');
 }

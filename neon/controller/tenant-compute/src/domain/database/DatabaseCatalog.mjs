@@ -7,7 +7,7 @@ export const PackagedPreloadLibraries = Object.freeze(['timescaledb', 'anon', 'p
  * Validate an explicit packaged-library selection without granting filesystem or arbitrary library authority.
  * The caller authorizes database configuration; this pure function has no I/O or mutation side effects.
  * @param {string[] | undefined} libraries - Requested startup libraries, with omission preserving the existing policy.
- * @returns {string[]} A canonical ordered selection, excluding Neon's mandatory library.
+ * @returns {string[]} A canonical ordered selection, excluding mandatory compute libraries.
  * @throws {Error} INVALID_SPEC for unknown libraries, duplicate entries or invalid shapes.
  */
 export function DatabasePreloadLibraries(libraries) {
@@ -131,7 +131,7 @@ function ConfigurePackagedLibraries(tenant) {
   const existing = (tenant.settings.find(option => option.name === 'shared_preload_libraries')?.value || '').split(',')
     .map(value => value.trim()).filter(value => value && value !== 'neon' && !PackagedPreloadLibraries.includes(value));
   tenant.settings = [...tenant.settings.filter(option => option.name !== 'shared_preload_libraries'),
-    {name: 'shared_preload_libraries', value: [...new Set(['neon', ...libraries, ...existing])].join(','), vartype: 'string'}];
+    {name: 'shared_preload_libraries', value: [...new Set(['neon', 'pg_stat_statements', ...libraries, ...existing])].join(','), vartype: 'string'}];
   if (libraries.includes('timescaledb') && !tenant.settings.some(option => option.name === 'max_worker_processes')) {
     tenant.settings.push({name: 'max_worker_processes', value: '32', vartype: 'string'});
   }

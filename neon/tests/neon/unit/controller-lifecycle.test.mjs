@@ -1,5 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+
+test('Observing dormant compute cannot connect to SQL or publish wake demand',async()=>{
+  let connections=0;
+  const api={optional:async()=>({spec:{replicas:0}})};
+  const lifecycle=new Lifecycle(api,{require(){}},async()=>{connections++;throw Error('Dormant SQL must not be contacted');});
+  const endpoint={uid:'dormant',name:'neon-ep-dormant',suspend:{mode:'idle',idleSeconds:300},status:{phase:'Dormant'}};
+  assert.equal(await lifecycle.sampleDemand(endpoint),false);
+  await lifecycle.idle(endpoint);
+  assert.equal(connections,0);
+  assert.deepEqual(lifecycle.activityIds(),[]);
+});
 import {Lifecycle} from '../../../controller/tenant-compute/src/infrastructure/compute/Lifecycle.mjs';
 import {Leadership} from '../../../controller/tenant-compute/src/infrastructure/kubernetes/Kubernetes.mjs';
 const OWNER='neon.klustr.io/endpoint-uid',ADMISSION='neon.klustr.io/admission';

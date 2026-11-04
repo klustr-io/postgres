@@ -15,6 +15,8 @@ pub(in crate::http) async fn get_insights(State(compute): State<Arc<ComputeNode>
         return JsonResponse::invalid_status(status);
     }
 
-    let insights = compute.collect_insights().await;
-    JsonResponse::success(StatusCode::OK, insights)
+    match compute.collect_insights().await {
+        Ok(insights) => JsonResponse::success(StatusCode::OK, insights),
+        Err(error) => JsonResponse::error(StatusCode::SERVICE_UNAVAILABLE, error),
+    }
 }

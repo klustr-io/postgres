@@ -1,3 +1,22 @@
+# Statement telemetry and idle-aware collection - source changeset
+
+Managed compute preloads `pg_stat_statements` and enables it idempotently in
+declared databases and internal `postgres` during native startup. Optional
+library changes cannot remove the mandatory telemetry baseline.
+
+Private compute-control insights use the internal database with bounded SQL
+timeouts and report collection failures explicitly. Idle detection uses
+role-filtered application statement counters for internal `postgres`; repeated
+telemetry connections no longer renew customer demand. Short-lived customer
+SQL, including a spoofed monitoring application name, remains visible. Dormant
+observation never connects to SQL or wakes compute. Public/customer SQL paths
+still represent demand; external collectors must scrape only running native
+compute endpoints and retain history outside the sleeping database.
+
+Publication requires a small tmpfs-only PostgreSQL check proving statement
+metrics, idempotent extension activation and idle behavior during real monitoring
+session churn. No benchmark data, storage fleet or S3 fixture is created.
+
 # Packaged extensions and connection guidance - source changeset
 
 Source builds include PostgreSQL Anonymizer 3.3.2, Apache DataSketches 1.7.0
