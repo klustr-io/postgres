@@ -9,7 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl \
 COPY neon/controller/tenant-compute/package.json neon/controller/tenant-compute/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-fund --no-audit && npm cache clean --force
 COPY neon/controller/tenant-compute/src/ ./src/
-COPY neon/packaging/kubernetes/fleet-stack.json ./fleet-templates/fleet-stack.json
+ARG FLEET_BUNDLE=neon/packaging/kubernetes/fleet-stack.json
+COPY ${FLEET_BUNDLE} ./fleet-templates/fleet-stack.json
 FROM build AS roots
 COPY --from=minimal-base / /minimal-base/
 COPY neon/packaging/neon/controller-rootfs.mjs /collector.mjs

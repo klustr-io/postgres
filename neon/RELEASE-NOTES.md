@@ -26,6 +26,9 @@ integration fix; this changeset does not claim that public pgAdmin path is fixed
 Release-branch pushes now build and publish the coordinated seven-image set.
 The independent controller workflow publishes `controller-sha-<commit>` rather
 than overwriting the coordinated release's `sha-<commit>` tag.
+The coordinated controller embeds the six runtime digests from its own build;
+publication verifies those references against GHCR. This prevents an upgraded
+operator from provisioning the older images in standalone deployment examples.
 
 # Commit-guard wakeups — unreleased changeset
 

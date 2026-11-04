@@ -134,9 +134,26 @@ try{
       record.images[role].extensions_smoke='PASS';save();
     }
   }
+  // Bind the operator's deployment artifact to this build, rather than the
+  // previously published defaults in the checked-in deployment examples.
+  let fleetBundle=fs.readFileSync(path.join(context,'neon/packaging/kubernetes/fleet-stack.json'),'utf8');
+  const runtimeImages={};
+  for(const [role,image] of Object.entries(record.images)){
+    assert(/^sha256:[a-f0-9]{64}$/.test(image.image_id));
+    const expression=new RegExp('ghcr\\.io/klustr-io/neon-'+role+'@sha256:[a-f0-9]{64}','g');
+    assert(expression.test(fleetBundle),'Missing packaged runtime: '+role);
+    runtimeImages[role]='ghcr.io/klustr-io/neon-'+role+'@'+image.image_id;
+    fleetBundle=fleetBundle.replace(expression,runtimeImages[role]);
+  }
+  JSON.parse(fleetBundle);
+  fs.writeFileSync(path.join(context,'neon/build-fleet-stack.json'),fleetBundle);
+  record.fleet_release={runtime_images:runtimeImages,bundle_sha256:hash(Buffer.from(fleetBundle))};save();
   const tag=`klustr-neon-tenant-controller:${version}`;
-  build('tenant-controller',['--build-arg','SOURCE_REVISION='+record.base_commit,'--file',path.join(context,'neon/packaging/docker/neon/runtime/Dockerfile.tenant-controller'),'--load','--tag',tag,context]);
+  build('tenant-controller',['--build-arg','SOURCE_REVISION='+record.base_commit,'--build-arg','FLEET_BUNDLE=neon/build-fleet-stack.json','--file',path.join(context,'neon/packaging/docker/neon/runtime/Dockerfile.tenant-controller'),'--load','--tag',tag,context]);
   record.images['tenant-controller']={tag,image_id:JSON.parse(run(docker,['image','inspect',tag]))[0].Id};
+  const packagedBundle=run(docker,['run','--rm','--network','none','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges','--entrypoint','/usr/local/bin/node',record.images['tenant-controller'].image_id,'--input-type=module','-e',
+    "import {PackagedFleetResources} from '/app/src/infrastructure/provisioning/FleetResources.mjs'; import fs from 'node:fs'; PackagedFleetResources('/app/fleet-templates'); process.stdout.write(fs.readFileSync('/app/fleet-templates/fleet-stack.json')); "]);
+  assert.equal(hash(Buffer.from(packagedBundle)),record.fleet_release.bundle_sha256,'Controller packaged runtime release differs');
   for(const [role,image] of Object.entries(record.images)){
     const executable=role==='compute'?'/opt/postgres/v18/bin/postgres':role==='tenant-controller'?'/usr/local/bin/node':'/usr/local/bin/'+role.replaceAll('-','_');
     image.executable_smoke=run(docker,['run','--rm','--network','none','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges','--entrypoint',executable,image.image_id,role==='storage-controller'?'--help':'--version']).trim();

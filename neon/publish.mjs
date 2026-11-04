@@ -28,7 +28,8 @@ const output=path.resolve(arg('--output')||'build/published-release');fs.mkdirSy
 const manifest={schema_version:1,version,platform:'linux/amd64',source_repository:'https://github.com/'+repository,
   source_commit:commit,source_digest:build.source_digest,created_at:new Date().toISOString(),production_qualified:false,
   validation:'Source build, PostgreSQL regressions, native libpq/proxy/validator OAuth integration, protocol tests and non-root/read-only executable smoke. Production HA/RPO/performance qualification remains open.',
-  native_oauth:build.native_oauth,images:{}};
+  native_oauth:build.native_oauth,fleet_release:build.fleet_release,images:{}};
+assert(build.fleet_release?.runtime_images,'Missing coordinated runtime release');
 const archives={};
 for(const role of roles){
   const file=path.join(path.dirname(buildFile),'images',role+'.oci.tar');assert.equal(sha(fs.readFileSync(file)),build.images[role].archive_sha256,'Archive checksum: '+role);
@@ -65,6 +66,8 @@ for(const role of roles){
   if(previous)assert.equal(previous.data.config.digest,archive.config_digest,'Immutable commit tag differs');
   else{run('docker',['load','--input',archive.file]);run('docker',['tag',build.images[role].image_id,image.immutable_tag]);run('docker',['push',image.immutable_tag]);}
   const published=await remote(role,'sha-'+commit);assert.equal(published.data.config.digest,archive.config_digest);
+  if(role!=='tenant-controller')assert.equal('ghcr.io/klustr-io/neon-'+role+'@'+published.digest,
+    build.fleet_release.runtime_images[role],'Registry digest differs from packaged operator runtime: '+role);
   image.digest=published.digest;image.pinned='ghcr.io/klustr-io/neon-'+role+'@'+published.digest;console.log('Verified '+image.pinned);
 }
 for(const role of roles){

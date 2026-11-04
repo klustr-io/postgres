@@ -50,12 +50,19 @@ performs that check before publication. It exercises PG18 libpq, proxy/backend
 `OAUTHBEARER`, the installed validator, JWT and opaque introspection, and normal
 JSONB SQL. It does not certify zone-loss recovery or your identity provider.
 
-For a new release or registry mirror, maintainers must update the digest authority
-in [`render.mjs`](neon/packaging/deploy/render.mjs), render the deployment bundle,
-and build the controller with that bundle. The operator uses the controller
-image's packaged `fleet-stack.json` for runtime images; changing only an external
-Kustomize image entry does not replace the bundle inside the operator image.
-The packaged cluster compute image and metadata StatefulSet image must agree.
+The coordinated source build binds the controller's packaged `fleet-stack.json`
+to the six native runtime image digests built in the same run. The publication
+gate checks that registry digests match those embedded references, and the release
+manifest records that authority under `fleet_release`. The packaged cluster
+compute image and metadata StatefulSet image agree. Independent controller-only
+development builds retain the checked-in runtime defaults and are not a native
+runtime upgrade.
+
+Checked-in standalone Compose/Kustomize examples retain explicitly reviewed
+release defaults. For a registry mirror or updated standalone defaults, maintainers
+update [`render.mjs`](neon/packaging/deploy/render.mjs) and render that deployment
+bundle. Changing only an external Kustomize image entry does not replace the
+bundle inside an already built operator image.
 
 Set the operator Deployment image and its `FLEET_CONTROLLER_IMAGE` environment
 value to the same qualified controller digest. A Kustomize `images` transform
