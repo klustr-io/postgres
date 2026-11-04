@@ -32,6 +32,9 @@ operator from provisioning the older images in standalone deployment examples.
 GitHub Actions now pin releases declaring the Node 24 runtime, including checkout,
 Node setup, artifact transfer and Buildx setup. The controller workflow verifies
 an artifact upload/download round trip; application Node remains 24.19.0.
+Hosted OCI builds reclaim unused CodeQL, Swift, Haskell, Boost and Conda SDKs
+in addition to Android/.NET. Disk diagnostics run before and after cleanup;
+the 32 GiB minimum remains enforced before compilation.
 
 # Commit-guard wakeups — unreleased changeset
 
