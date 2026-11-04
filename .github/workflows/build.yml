@@ -19,7 +19,7 @@ jobs:
           sudo apt-get install build-essential coreutils libreadline-dev zlib1g-dev flex bison libxml2-dev libxslt-dev libssl-dev libxml2-utils xsltproc git
 
       - name: Checkout postgres repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Configure Postgres build
         run: |

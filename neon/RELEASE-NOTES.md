@@ -29,6 +29,9 @@ than overwriting the coordinated release's `sha-<commit>` tag.
 The coordinated controller embeds the six runtime digests from its own build;
 publication verifies those references against GHCR. This prevents an upgraded
 operator from provisioning the older images in standalone deployment examples.
+GitHub Actions now pin releases declaring the Node 24 runtime, including checkout,
+Node setup, artifact transfer and Buildx setup. The controller workflow verifies
+an artifact upload/download round trip; application Node remains 24.19.0.
 
 # Commit-guard wakeups — unreleased changeset
 
