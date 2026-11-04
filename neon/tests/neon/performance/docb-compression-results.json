@@ -1,0 +1,218 @@
+{
+    "recordedUtc":  "2026-11-04T14:01:18.5983292Z",
+    "note":  "Compression sensitivity follow-up; local fork only. Baseline dca718e used uncompressed DOCB bases. Follow-up stores sufficiently compressed bases in one ordinary TOAST chunk. Total relation sizes include allocated pages after VACUUM and are not a steady-state or cloud-cost estimate.",
+    "coreSourceSha256":  "156df704ac0c962eb25c2357fbc7ccc8b09fd60caf63ad9e7e24c474bd2aa9c8",
+    "baseline":  {
+                     "scope":  "Local fork only, durable commits, RAM-backed, 8 total CPUs, 32 documents, 64 KiB payload, GIN path index, 4 clients, 512 updates/sample. Compression sensitivity screen, not Neon capacity or production IO qualification.",
+                     "samples":  [
+                                     {
+                                         "shape":  "poorly-compressible",
+                                         "type":  "jsonb",
+                                         "tps":  2234.139573,
+                                         "wal_bytes_per_update":  77341.953125
+                                     },
+                                     {
+                                         "shape":  "poorly-compressible",
+                                         "type":  "docb",
+                                         "tps":  18909.03719,
+                                         "wal_bytes_per_update":  1321.75
+                                     },
+                                     {
+                                         "shape":  "poorly-compressible",
+                                         "type":  "docb",
+                                         "tps":  18937.712679,
+                                         "wal_bytes_per_update":  1422.53125
+                                     },
+                                     {
+                                         "shape":  "poorly-compressible",
+                                         "type":  "jsonb",
+                                         "tps":  2500.56165,
+                                         "wal_bytes_per_update":  77325.6875
+                                     },
+                                     {
+                                         "shape":  "compressible",
+                                         "type":  "jsonb",
+                                         "tps":  8479.629016,
+                                         "wal_bytes_per_update":  669.25
+                                     },
+                                     {
+                                         "shape":  "compressible",
+                                         "type":  "docb",
+                                         "tps":  16059.218368,
+                                         "wal_bytes_per_update":  1324.546875
+                                     },
+                                     {
+                                         "shape":  "compressible",
+                                         "type":  "docb",
+                                         "tps":  14458.375692,
+                                         "wal_bytes_per_update":  1432.5625
+                                     },
+                                     {
+                                         "shape":  "compressible",
+                                         "type":  "jsonb",
+                                         "tps":  11201.050098,
+                                         "wal_bytes_per_update":  664.484375
+                                     }
+                                 ],
+                     "storage":  {
+                                     "poorly-compressible":  {
+                                                                 "jsonb":  {
+                                                                               "total_relation_bytes":  72523776,
+                                                                               "stored_value_bytes_mean":  65581.9375
+                                                                           },
+                                                                 "docb":  {
+                                                                              "total_relation_bytes":  3055616,
+                                                                              "stored_value_bytes_mean":  650.0
+                                                                          }
+                                                             },
+                                     "compressible":  {
+                                                          "jsonb":  {
+                                                                        "total_relation_bytes":  385024,
+                                                                        "stored_value_bytes_mean":  828.0
+                                                                    },
+                                                          "docb":  {
+                                                                       "total_relation_bytes":  3014656,
+                                                                       "stored_value_bytes_mean":  650.0
+                                                                   }
+                                                      }
+                                 },
+                     "status":  "PASS"
+                 },
+    "followup":  {
+                     "scope":  "Local fork only, durable commits, RAM-backed, 8 total CPUs, 32 documents, 64 KiB payload, GIN path index, 4 clients, 512 updates/sample. Compression sensitivity screen, not Neon capacity or production IO qualification.",
+                     "samples":  [
+                                     {
+                                         "shape":  "poorly-compressible",
+                                         "type":  "jsonb",
+                                         "tps":  2208.991285,
+                                         "wal_bytes_per_update":  77338.90625
+                                     },
+                                     {
+                                         "shape":  "poorly-compressible",
+                                         "type":  "docb",
+                                         "tps":  15640.273705,
+                                         "wal_bytes_per_update":  1324.625
+                                     },
+                                     {
+                                         "shape":  "poorly-compressible",
+                                         "type":  "docb",
+                                         "tps":  19643.199693,
+                                         "wal_bytes_per_update":  1429.75
+                                     },
+                                     {
+                                         "shape":  "poorly-compressible",
+                                         "type":  "jsonb",
+                                         "tps":  2350.327301,
+                                         "wal_bytes_per_update":  77345.9375
+                                     },
+                                     {
+                                         "shape":  "compressible",
+                                         "type":  "jsonb",
+                                         "tps":  8758.125214,
+                                         "wal_bytes_per_update":  670.3125
+                                     },
+                                     {
+                                         "shape":  "compressible",
+                                         "type":  "docb",
+                                         "tps":  16622.297253,
+                                         "wal_bytes_per_update":  1317.109375
+                                     },
+                                     {
+                                         "shape":  "compressible",
+                                         "type":  "docb",
+                                         "tps":  17114.015443,
+                                         "wal_bytes_per_update":  1433.21875
+                                     },
+                                     {
+                                         "shape":  "compressible",
+                                         "type":  "jsonb",
+                                         "tps":  10591.423429,
+                                         "wal_bytes_per_update":  655.875
+                                     }
+                                 ],
+                     "source_sha256":  {
+                                           "core":  "156df704ac0c962eb25c2357fbc7ccc8b09fd60caf63ad9e7e24c474bd2aa9c8",
+                                           "extension_sql":  "1955e4b58393781f78d19e52c107d467d6f936e19d366f791ce077019f2bf814",
+                                           "probe":  "f389f68b349802277b1e6f73a572b3255c8db8c55a8e94b29c336b1d5e37d3ad"
+                                       },
+                     "storage":  {
+                                     "poorly-compressible":  {
+                                                                 "jsonb":  {
+                                                                               "total_relation_bytes":  72482816,
+                                                                               "stored_value_bytes_mean":  65582.0
+                                                                           },
+                                                                 "docb":  {
+                                                                              "total_relation_bytes":  3006464,
+                                                                              "stored_value_bytes_mean":  650.0
+                                                                          }
+                                                             },
+                                     "compressible":  {
+                                                          "jsonb":  {
+                                                                        "total_relation_bytes":  368640,
+                                                                        "stored_value_bytes_mean":  828.0
+                                                                    },
+                                                          "docb":  {
+                                                                       "total_relation_bytes":  835584,
+                                                                       "stored_value_bytes_mean":  649.9375
+                                                                   }
+                                                      }
+                                 },
+                     "status":  "PASS"
+                 },
+    "sourceSqlSha256":  "1955e4b58393781f78d19e52c107d467d6f936e19d366f791ce077019f2bf814",
+    "followupChecks":  {
+                           "native":  [
+                                          "Single-chunk pglz/LZ4 bases retain deltas and late projections; EXTERNAL retains seekable uncompressed bases",
+                                          "Canonical JSON text input and explicit JSONB casts",
+                                          "B-tree, hash, GIN, JSONPath and existing JSON functions accept DOCB without literal ambiguity",
+                                          "Selective paths match JSONB for objects, arrays, nulls, scalars and missing keys",
+                                          "Wide metadata, length-changing edits, Unicode, arrays and added keys match JSONB",
+                                          "Length-changing tail edits reuse the intervening 64 KiB payload; amortized WAL stays below 16 KiB/update",
+                                          "Planner fuses ordinary operator chains while preserving object/array step semantics",
+                                          "Delta updates, projection from deltas and consolidated base reuse",
+                                          "Old snapshot and held cursor survive concurrent rebase, deletion and VACUUM",
+                                          "Rollback/savepoints and cross-row/array copies survive source reclamation",
+                                          "Binary COPY and CLUSTER/VACUUM FULL preserve values",
+                                          "One-base consolidation, revert-to-base reuse, full rebase, freeze and final dependency reclamation",
+                                          "Physical WAL replay reconstructs native delta records on a separate standby",
+                                          "Immediate crash restart preserves committed roots and discards uncommitted deltas",
+                                          "Logical slot creation fences writers; CDC emits full JSON after VACUUM; dropping slot restores deltas"
+                                      ],
+                           "durableNeon":  [
+                                               "Occupied control port fails startup before PostgreSQL rather than hanging readiness",
+                                               "Single-chunk pglz/LZ4 bases retain deltas and late projections; EXTERNAL retains seekable uncompressed bases",
+                                               "Canonical JSON text input and explicit JSONB casts",
+                                               "B-tree, hash, GIN, JSONPath and existing JSON functions accept DOCB without literal ambiguity",
+                                               "Selective paths match JSONB for objects, arrays, nulls, scalars and missing keys",
+                                               "Wide metadata, length-changing edits, Unicode, arrays and added keys match JSONB",
+                                               "Length-changing tail edits reuse the intervening 64 KiB payload; amortized WAL stays below 16 KiB/update",
+                                               "Planner fuses ordinary operator chains while preserving object/array step semantics",
+                                               "Delta updates, projection from deltas and consolidated base reuse",
+                                               "Old snapshot and held cursor survive concurrent rebase, deletion and VACUUM",
+                                               "Rollback/savepoints and cross-row/array copies survive source reclamation",
+                                               "Binary COPY and CLUSTER/VACUUM FULL preserve values",
+                                               "One-base consolidation, revert-to-base reuse, full rebase, freeze and final dependency reclamation",
+                                               "Logical slot creation fences writers; CDC emits full JSON after VACUUM; dropping slot restores deltas",
+                                               "A fresh compute wakes a Neon branch; parent/branch updates and base reclamation remain isolated"
+                                           ],
+                           "bestEffortNeon":  [
+                                                  "Occupied control port fails startup before PostgreSQL rather than hanging readiness",
+                                                  "Single-chunk pglz/LZ4 bases retain deltas and late projections; EXTERNAL retains seekable uncompressed bases",
+                                                  "Canonical JSON text input and explicit JSONB casts",
+                                                  "B-tree, hash, GIN, JSONPath and existing JSON functions accept DOCB without literal ambiguity",
+                                                  "Selective paths match JSONB for objects, arrays, nulls, scalars and missing keys",
+                                                  "Wide metadata, length-changing edits, Unicode, arrays and added keys match JSONB",
+                                                  "Length-changing tail edits reuse the intervening 64 KiB payload; amortized WAL stays below 16 KiB/update",
+                                                  "Planner fuses ordinary operator chains while preserving object/array step semantics",
+                                                  "Delta updates, projection from deltas and consolidated base reuse",
+                                                  "Old snapshot and held cursor survive concurrent rebase, deletion and VACUUM",
+                                                  "Rollback/savepoints and cross-row/array copies survive source reclamation",
+                                                  "Binary COPY and CLUSTER/VACUUM FULL preserve values",
+                                                  "One-base consolidation, revert-to-base reuse, full rebase, freeze and final dependency reclamation",
+                                                  "Logical slot creation fences writers; CDC emits full JSON after VACUUM; dropping slot restores deltas",
+                                                  "A fresh compute wakes a Neon branch; parent/branch updates and base reclamation remain isolated"
+                                              ]
+                       },
+    "regressionTestsPassed":  231,
+    "followupImageId":  "sha256:02c30dd0e984d12eeacf2a530dbae13a1e2399b1d9b360bc93317249340af2f4"
+}

@@ -123,3 +123,21 @@ fresh compute on a branch and checks isolation after parent TOAST reclamation.
 These are short architecture screens, not capacity or release qualification.
 The normal compute-image smoke check also installs the extension and verifies
 a small native delta update/projection, so OCI packaging cannot silently omit it.
+
+The optional compression sensitivity screen compares repetitive and poorly
+compressible 64 KiB payloads on the local fork only. It uses 32 documents, four
+clients and 512 updates per sample, with GIN and durable local commits. Run it
+separately from other performance fixtures:
+
+```sh
+docker run --rm --init --network none --cpus 8 --memory 2g --memory-swap 2g \
+  --read-only --cap-drop ALL --security-opt no-new-privileges \
+  --tmpfs /var/lib/neon:rw,nosuid,nodev,size=1g,uid=10002,gid=10002,mode=0700 \
+  --tmpfs /tmp:rw,nosuid,nodev,size=64m,mode=1777 \
+  --mount "type=bind,source=$PWD/neon/tests/neon/performance,target=/probe,readonly" \
+  --entrypoint python3 IMAGE -B /probe/docb_compression.py > compression-results.json
+```
+
+Recorded [compression results](neon/performance/docb-compression-results.json)
+include before/after samples. Allocated relation sizes after vacuum include
+reusable pages and are not steady-state storage or cloud-cost estimates.

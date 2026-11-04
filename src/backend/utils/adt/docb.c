@@ -561,6 +561,38 @@ docb_make_delta(struct varlena *oldflat, struct varlena *flat, struct varlena *b
 }
 
 /*
+ * Keep a compressible base in one ordinary TOAST chunk.  This bounds the bytes
+ * fetched even for a late projection, without introducing a second format.
+ * Larger compressed streams would require reading unrelated chunks for a slice,
+ * so retain seekable uncompressed bases there.  Honor the column's compression
+ * choice and EXTERNAL's request to avoid compression.
+ */
+static Datum
+docb_save_full(Relation rel, struct varlena *flat, Form_pg_attribute att,
+			   int options)
+{
+	struct varlena *packed = NULL;
+	struct varlena *value = flat;
+	Datum		stored;
+
+	if (att->attstorage == TYPSTORAGE_EXTENDED ||
+		att->attstorage == TYPSTORAGE_MAIN)
+	{
+		Datum		compressed;
+
+		compressed = toast_compress_datum(PointerGetDatum(flat), att->attcompression);
+		packed = (struct varlena *) DatumGetPointer(compressed);
+		if (packed && VARSIZE(packed) - VARHDRSZ <= TOAST_MAX_CHUNK_SIZE &&
+			(uint64) VARSIZE(packed) * 4 <= VARSIZE(flat))
+			value = packed;
+	}
+	stored = toast_save_datum(rel, PointerGetDatum(value), NULL, options);
+	if (packed)
+		pfree(packed);
+	return stored;
+}
+
+/*
  * Only the full base owned by this same row/column may become a dependency. Values
  * arriving from another row have already been flattened by toast_tuple_init.
  * Consolidate changes against that base: old delta metadata can be retired
@@ -709,7 +741,7 @@ docb_toast_prepare(ToastTupleContext *ttc, int options)
 			}
 		}
 		if (!share)
-			stored = toast_save_datum(ttc->ttc_rel, PointerGetDatum(flat), NULL, options);
+			stored = docb_save_full(ttc->ttc_rel, flat, att, options);
 		if (flat != newvalue)
 			pfree(flat);
 		if (info->tai_colflags & TOASTCOL_NEEDS_FREE)

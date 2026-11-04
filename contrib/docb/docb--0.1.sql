@@ -12,7 +12,7 @@ CREATE FUNCTION docb_send(docb) RETURNS bytea
   AS 'jsonb_send' LANGUAGE internal IMMUTABLE STRICT PARALLEL SAFE;
 CREATE TYPE docb (
   INPUT = docb_in, OUTPUT = docb_out, RECEIVE = docb_recv, SEND = docb_send,
-  INTERNALLENGTH = variable, ALIGNMENT = int4, STORAGE = external,
+  INTERNALLENGTH = variable, ALIGNMENT = int4, STORAGE = extended,
   SUBSCRIPT = jsonb_subscript_handler
 );
 

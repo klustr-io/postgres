@@ -77,7 +77,11 @@ The storage work preserves the separation that makes compute suspension and bran
 
 The normal engine build passed all 231 PostgreSQL regression tests. Focused DOCB checks covered transactions, snapshots, vacuum, copying, table rewrites, crash recovery, physical replication, logical replication and branch isolation.
 
-There are still concrete limitations. Full DOCB bases are currently uncompressed to support selective access, so highly compressible documents can consume more storage. Any logical replication slot in a database selects full value writes for CDC correctness, which removes the delta write benefit there. Existing files containing DOCB deltas also require a compatible engine; exporting to JSONB provides a path back to an engine without DOCB support.
+We also checked content that compresses extremely well, since large documents are not always expensive to store. On a separate local engine screen with repetitive 64 KiB payloads, JSONB generated roughly 0.7 KB of WAL per update while DOCB generated about 1.4 KB. DOCB averaged around 17,000 updates per second against JSONB's 9,700 in that screen. The 50 times WAL reduction from the main experiment does not apply to this data.
+
+That check led to another storage improvement. DOCB now compresses full bases when they fit in one TOAST chunk and save at least 75 percent of the original size. Other bases retain direct range access. The follow up reduced allocated DOCB relation space from about 3.0 MB to 0.84 MB in the repetitive document fixture, although JSONB still occupied about 0.37 MB. These relation sizes include allocated pages after vacuum, rather than establishing a steady state storage ratio. A late projection from a compressed base can also require prefix decompression. The [compression results](neon/tests/neon/performance/docb-compression-results.json) record that tradeoff separately from the main Neon benchmark.
+
+Any logical replication slot in a database selects full value writes for CDC correctness, which removes the delta write benefit there. Existing files containing DOCB deltas also require a compatible engine; exporting to JSONB provides a path back to an engine without DOCB support.
 
 ## Run it yourself, or explore it with Klustr
 

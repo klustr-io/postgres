@@ -1272,10 +1272,18 @@ use canonical JSON with the JSONB version byte for binary values; storage deltas
 never become an application wire codec. `body::jsonb` exports ordinary JSONB.
 Migrating existing columns requires an explicitly planned conversion. Export to
 JSONB before moving to an engine without DOCB support; do not directly downgrade
-files containing delta records. Full rebases are currently uncompressed to keep
-range reads seekable, so highly compressible documents can use more space than
-ordinary JSONB. Large structural edits can fall back to full writes, and existing
-JSON function calls/GIN extraction can still materialize whole values.
+files containing delta records. Full bases use the column's compression method
+only when the result fits in one TOAST chunk and saves at least 75% of its size;
+other bases stay uncompressed to keep range reads seekable. `STORAGE EXTERNAL`
+disables base compression. Reading late fields from a compressed base may still
+require prefix decompression, although the stored base fits in one chunk. Highly
+compressible JSONB can generate less WAL and occupy less space than DOCB because
+it can fit inline without delta metadata. Existing columns created with
+`STORAGE EXTERNAL` keep that policy; `ALTER TABLE documents ALTER COLUMN body SET
+STORAGE EXTENDED` permits compression on future full-base writes without rewriting
+stored rows. No existing table is automatically converted. Large structural edits
+can fall back to full writes, and existing JSON function calls/GIN extraction can
+still materialize whole values.
 
 ### Statement metrics and idle-safe telemetry
 

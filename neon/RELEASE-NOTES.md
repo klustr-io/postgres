@@ -24,8 +24,18 @@ waiting while the database runs. Two listener tests and an occupied-port
 integration check cover the failure. Diagnostic fixture ports avoid the Linux
 ephemeral client range, and subsequent durable branch/wake checks pass.
 
+Follow-up compression checks found that repetitive content generated less WAL
+with JSONB than DOCB. Full DOCB bases now use the column's pglz/LZ4 compression
+only when they fit in one TOAST chunk and save at least 75%; other bases stay
+seekable and uncompressed. No storage-format change is needed. This reduced
+allocated DOCB relation space from about 3.0 MB to 0.84 MB in a small local fixture;
+JSONB remained smaller at about 0.37 MB and generated less WAL for that data.
+The [compression screen and results](tests/neon/performance/docb-compression-results.json)
+are separate from the durable Neon benchmark. Native and Neon checks cover
+compressed bases, late projections and the EXTERNAL opt-out.
+
 CDC slots select full-value writes; compressible full values and large structural
-edits remain limitations. This is not a published OCI release or a production
+edits retain tradeoffs. This is not a published OCI release or a production
 storage-format qualification. See [deployment and compatibility details](../DEPLOY.md#native-docb-documents-experimental).
 The [performance article](../blog.md) and
 [recorded benchmark summary](tests/neon/performance/docb-results.json) accompany

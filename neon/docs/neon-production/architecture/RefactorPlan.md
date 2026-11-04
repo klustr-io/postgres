@@ -148,8 +148,11 @@ The bounded matcher handles values up to 16 MiB; other cases retain a full-value
 fallback. This is byte-range reuse, not a structure-aware subtree store.
 
 Roots have at most 64 spans and one full-base dependency, with each delta below
-one quarter of the value. Repeated edits do not form delta chains. Full rebases are
-currently uncompressed to preserve seekable reads. A projection reads metadata
+one quarter of the value. Repeated edits do not form delta chains. Full bases
+use standard pglz/LZ4 only when the result fits one TOAST chunk and saves at least
+75%; other bases remain uncompressed to preserve seekable reads. Column storage
+EXTERNAL disables compression. Late reads from compressed bases can require
+prefix decompression. A projection reads metadata
 and selected ranges; a planner support function fuses ordinary `->`/`->>` chains
 while retaining each step's object/array semantics. Results remain self-contained
 instead of exposing unsafe lazy pointers across transaction lifetimes.

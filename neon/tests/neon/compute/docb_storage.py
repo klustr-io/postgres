@@ -181,6 +181,22 @@ try:
     sql('DROP TABLE legacy_compression')
     sql('CREATE EXTENSION docb')
     expect("SELECT pg_column_compression('{}'::docb) IS NULL")
+    sql('CREATE TABLE compressed_bases(p docb COMPRESSION pglz,l docb COMPRESSION lz4,e docb); '
+        'ALTER TABLE compressed_bases ALTER COLUMN e SET STORAGE EXTERNAL; '
+        "INSERT INTO compressed_bases SELECT b::docb,b::docb,b::docb FROM (SELECT "
+        "jsonb_build_object('counter',0,'payload',repeat('0123456789abcdef',4096),"
+        "'zzlate','unchanged-tail') b) seed")
+    expect("SELECT pg_column_compression(p)='pglz' AND pg_column_compression(l)='lz4' "
+           "AND pg_column_compression(e) IS NULL AND p::jsonb=l::jsonb AND l::jsonb=e::jsonb "
+           "FROM compressed_bases")
+    sql("UPDATE compressed_bases SET p=jsonb_set(p,'{counter}','1'),"
+        "l=jsonb_set(l,'{counter}','1'),e=jsonb_set(e,'{counter}','1')")
+    sql('VACUUM compressed_bases')
+    expect("SELECT pg_column_compression(p)='docb_delta' AND pg_column_compression(l)='docb_delta' "
+           "AND p::jsonb=l::jsonb AND l::jsonb=e::jsonb AND p->>'counter'='1' "
+           "AND p->>'zzlate'='unchanged-tail' AND l->>'zzlate'='unchanged-tail' "
+           "AND length(p->>'payload')=65536 AND length(l->>'payload')=65536 FROM compressed_bases")
+    checks.append('Single-chunk pglz/LZ4 bases retain deltas and late projections; EXTERNAL retains seekable uncompressed bases')
     expect("SELECT pg_typeof(jsonb_set('{}','{x}','1'))='jsonb'::regtype")
     expect("SELECT jsonb('{\"x\":1}') = '{\"x\":1}'::jsonb")
     expect("SELECT (to_jsonb('{\"x\":1}'::docb)->>'x')='1' AND "
@@ -338,6 +354,8 @@ try:
         try:
             for number in range(40, 45):
                 sql(f"UPDATE docs SET body=jsonb_set(body,'{{counter}}','{number}'::jsonb) WHERE id=1")
+            sql("UPDATE compressed_bases SET p=jsonb_set(p,'{counter}','2'),"
+                "l=jsonb_set(l,'{counter}','2'),e=jsonb_set(e,'{counter}','2')")
             target = sql('SELECT pg_current_wal_insert_lsn()')
             deadline = time.monotonic()+10
             while True:
@@ -351,6 +369,10 @@ try:
             result = command([PG+'psql','-XqAt','-h','127.0.0.1','-p','15435','-U',USER,
                 '-d','postgres','-c',"SELECT body->>'counter' FROM docs WHERE id=1"]).stdout.strip()
             assert result == '44', result
+            result = command([PG+'psql','-XqAt','-h','127.0.0.1','-p','15435','-U',USER,
+                '-d','postgres','-c',"SELECT p::jsonb=l::jsonb AND l::jsonb=e::jsonb "
+                "AND p->>'counter'='2' AND p->>'zzlate'='unchanged-tail' FROM compressed_bases"]).stdout.strip()
+            assert result == 't', result
         finally:
             command([PG+'pg_ctl','-D',str(standby),'-m','fast','-w','stop'])
         checks.append('Physical WAL replay reconstructs native delta records on a separate standby')
@@ -364,6 +386,9 @@ try:
         expect("SELECT md5(string_agg(body::text,'' ORDER BY id)) FROM docs", before)
         sql('VACUUM docs')
         checks.append('Immediate crash restart preserves committed roots and discards uncommitted deltas')
+        expect("SELECT p::jsonb=l::jsonb AND l::jsonb=e::jsonb AND p->>'counter'='2' "
+               "AND p->>'zzlate'='unchanged-tail' AND l->>'zzlate'='unchanged-tail' FROM compressed_bases")
+    sql('DROP TABLE compressed_bases')
     results = report['results']
     projections = report['projections']
     for indexed in (False, True):
