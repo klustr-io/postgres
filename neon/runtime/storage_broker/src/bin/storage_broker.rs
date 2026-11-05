@@ -720,7 +720,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
             .await?;
 
-            let mut tls_config = rustls::ServerConfig::builder()
+            let mut tls_config = http_utils::tls_certs::server_config_builder()
                 .with_no_client_auth()
                 .with_cert_resolver(cert_resolver);
 

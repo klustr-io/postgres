@@ -10,6 +10,8 @@ Updates the AWS SDK, TLS, JWT, RSA and database adapter dependencies and pins Ru
 1.99.1. S3-compatible endpoints retain the HTTP/1.1 streaming transport option.
 The packaged psql omits Readline line editing/history to remove its ncurses dependency.
 Both OCI publication workflows scan built archives before pushing them.
+Storage TLS listeners explicitly select the certificate loader's crypto provider,
+with a regression test covering both compiled Rustls backends.
 
 The source dependency scan reports no critical/high findings. Two medium findings
 remain. The [security review](docs/neon-production/architecture/SecurityReview.md)

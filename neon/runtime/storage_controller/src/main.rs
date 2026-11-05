@@ -529,7 +529,7 @@ async fn async_main() -> anyhow::Result<()> {
             )
             .await?;
 
-            let server_config = rustls::ServerConfig::builder()
+            let server_config = http_utils::tls_certs::server_config_builder()
                 .with_no_client_auth()
                 .with_cert_resolver(resolver);
 

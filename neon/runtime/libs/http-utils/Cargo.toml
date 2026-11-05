@@ -20,7 +20,7 @@ pprof.workspace = true
 regex.workspace = true
 routerify.workspace = true
 rustls-pemfile.workspace = true
-rustls.workspace = true
+rustls = { workspace = true, features = ["ring"] }
 serde_json.workspace = true
 serde_path_to_error.workspace = true
 serde.workspace = true
@@ -40,3 +40,7 @@ tokio-stream = { version = "0.1.14" }
 metrics.workspace = true
 utils.workspace = true
 workspace_hack = { version = "0.1", path = "../../workspace_hack" }
+
+[dev-dependencies]
+# Exercise the SDK's provider alongside the storage services' ring provider.
+rustls = { workspace = true, features = ["aws_lc_rs"] }

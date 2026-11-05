@@ -74,6 +74,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=shared \
        PG_CONFIG=/opt/postgres/v18/bin/pg_config NEON_CARGO_ARTIFACT_TARGET_DIR=/source/target/release \
        CARGO_BUILD_FLAGS=--locked CARGO_PROFILE=--release -j${BUILD_JOBS} all install; done \
     && cargo test --locked --release -p postgres-protocol2 authentication::sasl \
+    && cargo test --locked --release -p http-utils --lib tls_provider_tests \
     && cargo test --locked --release -p tokio-postgres2 --lib security_tests \
     && cargo test --locked --release -p tokio-postgres --lib row::test \
     && cargo test --locked --release -p pq_proto --lib security_tests \

@@ -642,7 +642,7 @@ async fn start_safekeeper(conf: Arc<SafeKeeperConf>) -> Result<()> {
             })
             .await??;
 
-        let config = rustls::ServerConfig::builder()
+        let config = http_utils::tls_certs::server_config_builder()
             .with_no_client_auth()
             .with_cert_resolver(cert_resolver);
 

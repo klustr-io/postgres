@@ -12,6 +12,25 @@ use rustls::{
 };
 use x509_cert::der::Reader;
 
+/// Build storage-service TLS configuration with the certificate resolver's provider.
+pub fn server_config_builder() -> rustls::ConfigBuilder<rustls::ServerConfig, rustls::WantsVerifier> {
+    rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()
+        .expect("ring supports the default TLS protocol versions")
+}
+
+#[cfg(test)]
+mod tls_provider_tests {
+    #[test]
+    fn server_configuration_accepts_multiple_compiled_crypto_backends() {
+        let _config = super::server_config_builder()
+            .with_no_client_auth()
+            .with_cert_resolver(std::sync::Arc::new(
+                rustls::server::ResolvesServerCertUsingSni::new(),
+            ));
+    }
+}
+
 pub async fn load_cert_chain(filename: &Utf8Path) -> anyhow::Result<Vec<CertificateDer<'static>>> {
     let cert_data = tokio::fs::read(filename)
         .await

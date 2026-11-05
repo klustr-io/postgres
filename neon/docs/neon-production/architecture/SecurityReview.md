@@ -13,6 +13,7 @@ remain pending for this changeset. Published
 | PostgreSQL frontend framing | Empty Describe and Close payloads panicked while parsing. | Check the minimum payload length before consuming fields. |
 | Native WAL connections | A peer that stopped reading could retain a feedback or COPY cleanup operation indefinitely. | Apply a socket write deadline when the native WAL API is enabled. Disk mutations are not cancelled by the socket deadline. Ordinary WAL backpressure policy is preserved. |
 | Renamed PostgreSQL client | DataRow fields could disagree with the advertised columns and cause a later accessor panic. | Validate field counts at row construction for prepared and simple queries. This also covers the renamed client that package-name scanners miss. |
+| Storage TLS configuration | Linking the SDK's crypto backend alongside ring made automatic Rustls provider selection ambiguous and could panic during TLS startup. | Select the certificate loader's ring provider explicitly in a shared builder used by pageserver, safekeeper, storage-controller and storage-broker listeners. |
 
 The field-count repair follows the [upstream PostgreSQL client fix](https://github.com/rust-postgres/rust-postgres/commit/7a00ffa9ad4d951ec0a4564b52f1780fa9d353c1).
 The normal client is now checked-in upstream 0.7.18 source with Neon's replication,
@@ -21,7 +22,7 @@ validation tests pass. Both client variants are covered by image-build regressio
 
 ## Verification
 
-Thirty-three focused Rust tests passed across frontend framing, authentication,
+Thirty-four focused Rust tests passed across frontend framing, authentication,
 both PostgreSQL clients, JWT validation, S3 transport and native WAL safety/deadlines.
 All eight runtime binary targets type-check with Rust 1.99.1; this does not replace
 the pending complete OCI build and link checks.
@@ -29,6 +30,11 @@ Authentication tests cover
 valid frames through the 64 KiB limit as well as malformed input. The frontend
 screen includes 4,096 short frames. Signed JWTs with malformed optional expiration
 claims are rejected, while existing internal token compatibility tests pass.
+
+The TLS configuration regression failed before the repair and passed afterward
+with both crypto backends explicitly enabled in test dependencies. The four
+affected service binary targets passed their subsequent type checks. This test
+also runs in the image build.
 
 AddressSanitizer, UndefinedBehaviorSanitizer and leak detection passed for the native
 quorum policy fixture and 200 libpq reconnect/reset cycles. Descriptor reservations
