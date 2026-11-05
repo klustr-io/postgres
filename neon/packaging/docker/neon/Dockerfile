@@ -21,9 +21,8 @@ RUN make -C /pgbuild/monorepo -j${BUILD_JOBS} check
 USER root
 
 FROM engine AS extensions
-RUN apt-get -o Acquire::Retries=3 update \
-    && apt-get -o Acquire::Retries=3 install -y --no-install-recommends libboost-dev \
-    && rm -rf /var/lib/apt/lists/*
+COPY neon/packaging/docker/shared/install-debian-packages.sh /usr/local/libexec/neon/install-debian-packages.sh
+RUN sh /usr/local/libexec/neon/install-debian-packages.sh libboost-dev
 ENV RUSTUP_TOOLCHAIN=1.99.1
 RUN rustup toolchain install ${RUSTUP_TOOLCHAIN} --profile minimal
 COPY neon/packaging/neon/extensions.lock.json /extension-build/extensions.lock.json

@@ -1,7 +1,12 @@
 # syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 FROM rust:1.88.0-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0
 COPY neon/packaging/docker/shared/debian.sources /etc/apt/sources.list.d/debian.sources
-RUN apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update && apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends clang libclang-dev cmake pkg-config protobuf-compiler libprotobuf-dev libssl-dev libpq-dev libseccomp-dev liburing-dev liblz4-dev libzstd-dev python3 bison flex libreadline-dev libicu-dev libxml2-dev libxslt1-dev zlib1g-dev libnghttp2-dev libgcrypt20-dev libipc-run-perl libio-pty-perl && rm -rf /var/lib/apt/lists/*
+COPY neon/packaging/docker/shared/install-debian-packages.sh /usr/local/libexec/neon/install-debian-packages.sh
+RUN sh /usr/local/libexec/neon/install-debian-packages.sh \
+    clang libclang-dev cmake pkg-config protobuf-compiler libprotobuf-dev libssl-dev \
+    libpq-dev libseccomp-dev liburing-dev liblz4-dev libzstd-dev python3 bison flex \
+    libreadline-dev libicu-dev libxml2-dev libxslt1-dev zlib1g-dev libnghttp2-dev \
+    libgcrypt20-dev libipc-run-perl libio-pty-perl
 ARG BUILD_JOBS=8
 COPY --from=native-inputs / /native-archives/
 COPY neon/packaging/neon/native-dependencies.lock.json /out/qualification/native-dependencies.lock.json
