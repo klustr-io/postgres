@@ -72,9 +72,12 @@ http-utils.workspace = true
 utils.workspace = true
 wal_decoder.workspace = true
 env_logger.workspace = true
-nix.workspace = true
+nix = { workspace = true, features = ["time"] }
 
 workspace_hack.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tokio-epoll-uring.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

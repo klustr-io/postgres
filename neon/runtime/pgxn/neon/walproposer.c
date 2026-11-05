@@ -276,6 +276,11 @@ WalProposerPoll(WalProposer *wp)
 		if (rc == 1 && (events & WL_SOCKET_MASK))
 		{
 			Assert(sk != NULL);
+			/* Native data progresses independently of this control connection.
+			 * Use current local WAL before constructing reconnect/elected state. */
+			if (wp->api.control_only_append && wp->api.control_only_append(sk) &&
+				!wp->config->syncSafekeepers)
+				wp->availableLsn = Max(wp->availableLsn,wp->api.get_flush_rec_ptr(wp));
 			AdvancePollState(sk, events);
 		}
 
@@ -309,7 +314,9 @@ WalProposerPoll(WalProposer *wp)
 			 * If no WAL was generated during timeout (and we have already
 			 * collected the quorum), then send empty keepalive message
 			 */
-			if (wp->availableLsn != InvalidXLogRecPtr)
+			if (wp->availableLsn != InvalidXLogRecPtr &&
+				!(wp->api.control_only_append && wp->n_safekeepers > 0 &&
+				  wp->api.control_only_append(&wp->safekeeper[0])))
 			{
 				BroadcastAppendRequest(wp);
 			}
@@ -330,6 +337,11 @@ WalProposerPoll(WalProposer *wp)
 				}
 			}
 		}
+		/* A transferred data owner must drain idle tails and refresh its
+		 * election snapshot even when the legacy sockets have no new WAL. */
+		if (rc == 0 && wp->api.control_only_append && wp->n_safekeepers > 0 &&
+			wp->api.control_only_append(&wp->safekeeper[0]))
+			break;
 	}
 }
 
@@ -1652,6 +1664,7 @@ SendAppendRequests(Safekeeper *sk)
 	PGAsyncWriteResult writeResult;
 	bool		sentAnything = false;
 	AppendRequestHeader *req;
+	bool		controlOnly = false;
 
 	if (sk->active_state == SS_ACTIVE_FLUSH)
 	{
@@ -1674,7 +1687,9 @@ SendAppendRequests(Safekeeper *sk)
 			sentAnything = true;
 
 			endLsn = sk->streamingAt;
-			endLsn += MAX_SEND_SIZE;
+			controlOnly = wp->api.control_only_append && wp->api.control_only_append(sk);
+			if (!controlOnly)
+				endLsn += MAX_SEND_SIZE;
 
 			/* if we went beyond available WAL, back off */
 			if (endLsn > wp->availableLsn)
@@ -1747,6 +1762,8 @@ SendAppendRequests(Safekeeper *sk)
 				case PG_ASYNC_WRITE_SUCCESS:
 					/* Continue writing the next message */
 					sk->active_state = SS_ACTIVE_SEND;
+					if (controlOnly)
+						return true;
 					break;
 
 				case PG_ASYNC_WRITE_TRY_FLUSH:

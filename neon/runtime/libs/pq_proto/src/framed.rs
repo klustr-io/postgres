@@ -150,6 +150,43 @@ impl<S: AsyncRead + Unpin> FramedReader<S> {
     pub async fn read_message(&mut self) -> Result<Option<FeMessage>, ConnectionError> {
         read_message(&mut self.stream, &mut self.read_buf, FeMessage::parse).await
     }
+
+    /// Bound a COPY application's payload before the parser reserves the body.
+    /// Retains the same buffered, cancellation-safe framing as read_message.
+    pub async fn read_message_limited(&mut self, max_payload: usize) -> Result<Option<FeMessage>, ConnectionError> {
+        read_message(&mut self.stream, &mut self.read_buf,
+            |buffer| parse_message_limited(buffer,max_payload)).await
+    }
+}
+
+fn parse_message_limited(buffer: &mut BytesMut, max_payload: usize) -> Result<Option<FeMessage>, ProtocolError> {
+    if buffer.len() >= 5 {
+        let length = u32::from_be_bytes(buffer[1..5].try_into().unwrap()) as usize;
+        if length > max_payload.saturating_add(4) {
+            return Err(ProtocolError::Protocol("message exceeds application payload limit".into()));
+        }
+    }
+    FeMessage::parse(buffer)
+}
+
+#[cfg(test)]
+mod limited_frame_tests {
+    use super::*;
+    #[test]
+    fn rejects_announced_oversize_before_reserving_body() {
+        let mut bytes = BytesMut::from(&b"d\xff\xff\xff\xff"[..]);
+        let capacity = bytes.capacity();
+        assert!(parse_message_limited(&mut bytes,128*1024).is_err());
+        assert_eq!(bytes.capacity(),capacity);
+        assert_eq!(bytes.len(),5);
+    }
+    #[test]
+    fn accepts_the_exact_payload_boundary() {
+        let mut bytes = BytesMut::from(&b"d\0\0\0\x07wal"[..]);
+        assert!(matches!(parse_message_limited(&mut bytes,3).unwrap(),Some(FeMessage::CopyData(data)) if data.as_ref()==b"wal"));
+        let mut over = BytesMut::from(&b"d\0\0\0\x08wal!"[..]);
+        assert!(parse_message_limited(&mut over,3).is_err());
+    }
 }
 
 /// Write-only version of `Framed`.

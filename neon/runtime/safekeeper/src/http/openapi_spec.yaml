@@ -13,6 +13,65 @@ servers:
 
 
 paths:
+  /v1/tenant/{tenant_id}/timeline/{timeline_id}/wal:
+    parameters:
+      - {name: tenant_id, in: path, required: true, schema: {type: string, format: hex}}
+      - {name: timeline_id, in: path, required: true, schema: {type: string, format: hex}}
+    post:
+      tags: [Internal WAL]
+      operationId: nativeWalAppend
+      summary: Append a fenced native commit-group frame
+      description: >-
+        Experimental, disabled unless enable-native-wal-api is configured. Requires
+        the existing tenant JWT authorization. Does not create a timeline or elect
+        a writer. The body is exactly one protocol-v3 append frame, bounded by the
+        safekeeper MAX_SEND_SIZE plus its 45-byte header. Retries verify overlapping
+        stored bytes. Success is one node's progress, not a quorum commit proof;
+        clients must validate term, generation and complete-record flush prefixes
+        against the active membership. Accepted disk operations survive disconnects.
+      parameters:
+        - name: Accept
+          in: header
+          schema: {type: string, enum: [application/json, application/vnd.neon.wal-progress-v1]}
+          description: >-
+            The internal binary variant is exactly 46 bytes: version u8 (1),
+            outcome u8 (appended 0, already_present 1, gap 2, fenced 3, mismatch 4),
+            generation u32, term u64, node_id u64, write_lsn u64, flush_lsn u64,
+            commit_lsn u64. All multibyte values use network byte order.
+        - name: flush
+          in: query
+          schema: {type: boolean, default: true}
+          description: False permits staging partial records; write_lsn is never a durable acknowledgement.
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: {type: string, format: binary}
+      responses:
+        '200':
+          description: Appended or verified duplicate; flush_lsn is the complete-record durable prefix on this node.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [outcome, generation, term, write_lsn, flush_lsn, commit_lsn]
+                properties:
+                  outcome: {type: string, enum: [appended, already_present, gap, fenced, mismatch]}
+                  generation: {type: integer, minimum: 0}
+                  term: {type: integer, minimum: 0}
+                  write_lsn: {type: string}
+                  flush_lsn: {type: string}
+                  commit_lsn: {type: string}
+            application/vnd.neon.wal-progress-v1:
+              schema: {type: string, format: binary}
+        '400': {description: Malformed, oversized or unsupported append frame}
+        '401': {description: Missing or invalid authentication}
+        '403': {description: Token cannot access the requested tenant}
+        '404': {description: Feature disabled or timeline unavailable}
+        '408': {description: Request body exceeded its two-second deadline}
+        '409': {description: Fenced, gapped or mismatching append; response contains current node progress}
+        '429': {description: Bounded native append admission is full}
+        '500': {description: Storage operation failed; no successful append acknowledgement}
   /v1/status:
     get:
       tags:

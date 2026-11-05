@@ -221,3 +221,142 @@ small native detoast/TOAST/executor integration changes. No new storage marker,
 catalog-version bump, patch-applier or automatic conversion of existing tables is
 used. The normal source build installs the extension and the compute image smoke
 check verifies native delta storage. Existing published OCI tags lack this work.
+
+## Durable quorum execution refactor
+
+The implemented candidate replaces the WAL data path and its completion scheduling.
+It retains the existing elected term, membership rules and complete-record durable
+quorum. Application SQL, document types and connection behavior do not change.
+The candidate remains experimental, disabled by default and unpublished.
+
+### Current measurements
+
+The controlled comparisons use one image, the same clients and storage data,
+eight total CPUs, and original/candidate/candidate/original order. Each sample has
+a one-second warmup and five timed seconds. Compute and storage-engine changes
+happen outside the timed intervals. The harness verifies the running PostgreSQL
+binary, storage arguments, native-path counters and absence of fast acknowledgements.
+The baseline compiles the pre-refactor synchronous-replication implementation
+from commit `2da748e` with an
+unused ABI pointer so the same extension can load; it does not invoke the native
+commit provider. Baseline source and executable hashes are retained in the JSON.
+
+| Concurrent clients | Existing quorum mean TPS | Isolated native ingestion mean TPS | Improvement |
+|---|---:|---:|---:|
+| 32 | 21510 | 47402 | 2.204x |
+| 64 | 25718 | 58767 | 2.285x |
+
+A separate native PostgreSQL 18 control on the same image, affinity and eight-CPU
+budget averaged 118622 TPS at 64 clients. It uses local durability without
+Neon storage services. The candidate reaches 49.5% of that reference; the desired
+85% native-PG throughput has not been reached. These short RAM-only tests isolate
+software costs. They do not measure S3, disk IOPS, sustained production capacity
+or zone latency. The selected CPUs are distinct guest-reported SMT cores, not
+exclusive physical hardware. Affinity also improves native PG and is not counted
+as a software optimization.
+
+Complete sample values, hashes, counters and fault-check outcomes are in
+[quorum-io-results.json](../../../tests/neon/performance/quorum-io-results.json),
+under `latestNativeStream`. Earlier sections in that file retain historical
+experiments rather than current capability claims. Failed or incomplete runs
+are excluded from the comparisons.
+
+### What changed
+
+One elected sender owns the native data connections. Each peer has a bounded
+pipeline of up to eight authenticated COPY frames. New WAL can be submitted
+before prior replies arrive, while slow minorities cannot hold up a healthy
+majority. Queue positions and write positions remain separate from durable proof.
+The sender reads locally flushed WAL from PostgreSQL buffers where available,
+with the WAL file as fallback.
+
+A safekeeper drains up to eight already available frames without waiting to fill
+a batch. Contiguous same-epoch frames combine into one append and fsync. Other
+batches retain ordered validation and one final flush; rejected frames cannot
+contribute a commit candidate. Feedback contains the final complete-record
+flushed prefix, and a flush failure produces no success feedback.
+
+The dedicated native listener moves each accepted socket once onto an isolated
+ingest runtime. Its task-scoped I/O capability permits the owned positional write
+and fsync to execute there without a filesystem-worker handoff for every batch.
+Child tasks do not inherit that capability. Legacy elections, control traffic,
+HTTP and recovery retain their separate runtimes and ordinary asynchronous I/O.
+This is why the faster diagnostic direct-I/O engine is not the shipping design:
+it performs blocking filesystem work on ordinary WAL networking workers.
+
+Backends consume a versioned durable-prefix cache. Completion notifications target
+64 buckets of 512-byte WAL ranges instead of waking every waiter for every
+advancement. Reset and poison invalidate the cache before publishing a new epoch.
+Timed waits provide cancellation and postmaster-liveness checks, never permission
+to acknowledge an unreplicated transaction.
+
+### Durability and handoff boundaries
+
+Local fsync remains enabled. Durable commits require a complete-record flushed
+prefix from the applicable majority, with independent old and new majorities for
+joint membership. Node IDs must be distinct and belong to the elected membership;
+missing configured nodes stay in the quorum denominator. Remote-apply waits and
+the final cancellation/configuration guard remain in place.
+
+Before taking data ownership, the native sender completes authenticated COPY
+negotiation with the configured peers. If the API is disabled or negotiation
+fails, the original elected writer continues before ownership transfers. Once
+native ownership transfers, failure does not silently switch writers. This fixed
+a real bootstrap stall found when the A/B fixture omitted the native API flag.
+
+Retries verify overlapping bytes. Stale generations and terms, conflicting data,
+gaps and oversized frames are rejected. Accepted mutations finish even if a client
+disconnects. Idle asynchronous tails continue draining without another write.
+These properties preserve scale-to-zero drain semantics; this screen does not
+qualify the tenant controller's full sleep/wake lifecycle.
+
+### Validation and limits
+
+The isolated candidate passed authenticated new-WAL appends to all three storage
+processes, multiple frames queued before feedback, unauthorized and wrong-tenant
+rejection, duplicate/conflict verification, fencing, frame limits and rejection
+of election commands on the native-only listener. Acknowledged rows survived
+immediate compute and storage-process restarts. One paused node allowed commits;
+two paused nodes blocked acknowledgement until quorum returned. Cancellation,
+configuration fallback, idle-tail draining and valid control feedback after a
+forced reconnect also passed.
+
+Four focused Rust checks cover batch flush proof and injected flush failure,
+same-term control reconnects, exact frame parsing and task-scoped I/O isolation.
+Seventeen C checks cover membership reduction, cache invalidation and notification
+boundaries. Every fixture uses temporary RAM storage, no S3 and no persistent
+Docker volumes. This is not power-loss, persistent-media or multi-zone recovery
+qualification. The native provider and native listener remain opt-in; deployment
+wiring and removal of unsuccessful diagnostic paths precede release promotion.
+
+The architectural attribution is substantial: coalescing with ordinary asynchronous
+owned I/O measured 1.734x, while diagnostic direct I/O measured 2.473x. Isolating
+that I/O retained 2.204x at 32 clients and 2.285x at 64 clients. Earlier io_uring,
+thread-count, spin and single-cohort experiments did not establish a comparable
+gain. Short DWARF samples located expensive worker/futex wakeups; those samples
+cover selected processes, contain host instrumentation and are not throughput
+measurements or whole-system CPU percentages.
+
+### Research and applicability
+
+The papers informed the ownership and pipelining changes. Their reported speedups
+are not measurements of this PostgreSQL implementation.
+
+| Design | Relevant mechanism | Application to this implementation |
+|---|---|---|
+| [AlloyDB storage](https://cloud.google.com/blog/products/databases/alloydb-for-postgresql-intelligent-scalable-storage) | Synchronous regional log persistence followed by asynchronous log processing and block materialization. | Preserve the separation already present in Neon; isolate the log append/ack path from page work. This is not evidence that synchronous log durability can be omitted. |
+| [Aurora, SIGMOD 2017](https://www.amazon.science/publications/amazon-aurora-design-considerations-for-high-throughput-cloud-native-relational-databases) | Storage-side redo, reduced network amplification and efficient durable-state agreement. | Optimize bytes and hot-path messages before changing consensus. Its replication topology cannot be transplanted without rechecking quorum intersections and correlated failures. |
+| [CockroachDB transactional pipelining](https://www.cockroachlabs.com/blog/transaction-pipelining/) | Overlap replication of statement intents and prove persistence at commit. | Overlap independent work while keeping the final durability proof. Neon already avoids a separate distributed consensus operation for each ordinary SQL statement, so the advertised gain does not directly transfer. |
+| [SAP HANA ATR, VLDB 2017](https://www.vldb.org/pvldb/vol10/p1598-han.pdf) | Early log shipping and parallel replay with ordered visibility. | Move nonessential replay work away from commit. ATR's asynchronous analytical replica recovery is not a substitute for safekeeper quorum durability. |
+| [Socrates, SIGMOD 2019](https://www.microsoft.com/en-us/research/uploads/prod/2019/05/socrates.pdf) | Parallel log submission, durable landing zone and downstream dissemination of hardened blocks. | Evaluate overlap of local WAL staging and remote append, while preserving the boundary between speculative and recoverable data. |
+| [Taurus database](https://arxiv.org/html/2412.02792v1) | Separate append-only log/page stores and replicated PLogs; replace an unhealthy PLog through reconfiguration. | Useful for storage placement and straggler handling. Its all-replica PLog writes and metadata recovery scheme differ from Neon's majority log. |
+| [PolarFS, VLDB 2018](https://www.vldb.org/pvldb/vol11/p1849-cao.pdf) | User-space I/O loops, RDMA/SPDK and ParallelRaft reduce scheduling and serialization overhead. | Test scheduling overhead on ordinary TCP first; RDMA/SPDK remain optional deployment-dependent directions. Ordered PostgreSQL WAL cannot acknowledge a hole merely because a later write completed. |
+| [PALF, VLDB 2024](https://www.vldb.org/pvldb/vol17/p3745-xu.pdf) | Pipelined log replication and adaptive group replication. | Evaluate bounded batching and concurrent submission independently of record parsing and ack semantics. Batch deadlines must not strand low-rate writers. |
+| [BtrLog, VLDB 2026](https://arxiv.org/html/2606.27051v2) | One-round-trip durable appends with per-core io_uring loops and symmetric networking. | Strong motivation to remove channel/worker handoffs. Its failure-free prototype and modeled recovery do not establish production recovery qualification for our implementation. |
+
+[Autonomous Commit](https://www.cs.cit.tum.de/fileadmin/w00cfj/dis/papers/latency.pdf)
+explores separating durability work from transaction execution in LeanStore.
+Applying that design to PostgreSQL would require preserving its page and WAL
+recovery dependencies; it is not a drop-in justification for acknowledging before
+our required quorum. The current gain comes from changing execution ownership,
+batching and completion scheduling while retaining that proof.

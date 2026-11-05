@@ -929,6 +929,18 @@ pub struct PostgresBackendReader<IO> {
 }
 
 impl<IO: AsyncRead + AsyncWrite + Unpin> PostgresBackendReader<IO> {
+    /// Read a COPY payload with a limit enforced before body allocation.
+    pub async fn read_copy_message_limited(&mut self, max_payload: usize) -> Result<Bytes, CopyStreamHandlerEnd> {
+        let message = self.reader.read_message_limited(max_payload).await.inspect_err(|_| self.closed=true)?;
+        match message {
+            Some(FeMessage::CopyData(bytes)) => Ok(bytes),
+            Some(FeMessage::CopyDone) => Err(CopyStreamHandlerEnd::CopyDone),
+            Some(FeMessage::CopyFail) => Err(CopyStreamHandlerEnd::CopyFail),
+            Some(FeMessage::Terminate) => Err(CopyStreamHandlerEnd::Terminate),
+            None => Err(CopyStreamHandlerEnd::EOF),
+            _ => Err(ConnectionError::Protocol(ProtocolError::Protocol("unexpected message in bounded COPY stream".into())).into()),
+        }
+    }
     /// Read full message or return None if connection is cleanly closed with no
     /// unprocessed data.
     pub async fn read_message(&mut self) -> Result<Option<FeMessage>, ConnectionError> {

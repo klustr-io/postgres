@@ -5,6 +5,8 @@ MODULE_big = neon
 OBJS = \
 	$(WIN32RES) \
 	bounded_commit_guard.o \
+	native_quorum.o \
+	native_quorum_copy.o \
 	communicator.o \
 	communicator_process.o \
 	extension_server.o \

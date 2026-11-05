@@ -759,6 +759,10 @@ typedef struct walproposer_api
 	 */
 	void		(*update_safekeeper_status_for_metrics) (WalProposer *wp, uint32 sk_index, uint8 status);
 
+	/* Optional PostgreSQL-native data owner. True sends one control heartbeat
+	 * instead of ordinary WAL; elections/recovery still use the existing API. */
+	bool		(*control_only_append) (Safekeeper *sk);
+
 	/* END_HADRON */
 } walproposer_api;
 

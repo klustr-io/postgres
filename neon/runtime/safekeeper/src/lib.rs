@@ -25,6 +25,7 @@ pub mod hadron;
 pub mod handler;
 pub mod http;
 pub mod metrics;
+pub mod native_wal;
 pub mod patch_control_file;
 pub mod pull_timeline;
 pub mod rate_limit;
@@ -102,11 +103,15 @@ pub struct SafeKeeperConf {
     pub my_id: NodeId,
     pub listen_pg_addr: String,
     pub listen_pg_addr_tenant_only: Option<String>,
+    pub listen_native_wal_addr: Option<String>,
     pub listen_http_addr: String,
     pub listen_https_addr: Option<String>,
     pub advertise_pg_addr: Option<String>,
     pub availability_zone: Option<String>,
     pub no_sync: bool,
+    pub wal_io_engine: wal_storage::WalIoEngine,
+    pub wal_batch_delay_us: u64,
+    pub enable_native_wal_api: bool,
     /* BEGIN_HADRON */
     pub advertise_pg_addr_tenant_only: Option<String>,
     pub enable_pull_timeline_on_startup: bool,
@@ -158,8 +163,12 @@ impl SafeKeeperConf {
         SafeKeeperConf {
             workdir: Utf8PathBuf::from("./"),
             no_sync: false,
+            wal_io_engine: wal_storage::WalIoEngine::Tokio,
+            wal_batch_delay_us: 0,
+            enable_native_wal_api: false,
             listen_pg_addr: defaults::DEFAULT_PG_LISTEN_ADDR.to_string(),
             listen_pg_addr_tenant_only: None,
+            listen_native_wal_addr: None,
             listen_http_addr: defaults::DEFAULT_HTTP_LISTEN_ADDR.to_string(),
             listen_https_addr: None,
             advertise_pg_addr: None,
@@ -219,6 +228,16 @@ pub static WAL_SERVICE_RUNTIME: Lazy<Runtime> = Lazy::new(|| {
         .enable_all()
         .build()
         .expect("Failed to create WAL service runtime")
+});
+
+/// Native data batches may perform their owned filesystem operation directly
+/// here. Legacy elections, recovery, HTTP and broker reactors remain separate.
+pub static NATIVE_INGEST_RUNTIME: Lazy<Runtime> = Lazy::new(|| {
+    tokio::runtime::Builder::new_multi_thread()
+        .thread_name("native WAL IO")
+        .enable_all()
+        .build()
+        .expect("Failed to create native WAL ingest runtime")
 });
 
 pub static HTTP_RUNTIME: Lazy<Runtime> = Lazy::new(|| {

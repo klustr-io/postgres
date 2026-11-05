@@ -76,9 +76,16 @@ extern PGDLLIMPORT SyncRepConfigData *SyncRepConfig;
 /* user-settable parameters for synchronous replication */
 extern PGDLLIMPORT char *SyncRepStandbyNames;
 
-/* Called before the asynchronous fast exit, including prepared transactions. */
+/* Called after native waiting, including asynchronous exits and prepared xacts.
+ * A canceled native wait remains visible to the guard until it returns. */
 typedef void (*SyncRepCommitGuard_hook_type)(XLogRecPtr lsn, bool commit);
 extern PGDLLIMPORT SyncRepCommitGuard_hook_type SyncRepCommitGuard_hook;
+
+/* A native commit provider may supply an equivalent durable-prefix proof.
+ * False leaves the ordinary synchronous-replication wait unchanged. Providers
+ * must preserve remote_apply semantics and may not bypass the final guard. */
+typedef bool (*SyncRepCommitProvider_hook_type)(XLogRecPtr lsn, bool commit);
+extern PGDLLIMPORT SyncRepCommitProvider_hook_type SyncRepCommitProvider_hook;
 
 /* called by user backend */
 extern void SyncRepWaitForLSN(XLogRecPtr lsn, bool commit);

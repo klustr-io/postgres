@@ -103,6 +103,9 @@ struct Args {
     /// only tenant scoped auth tokens. Pointless if auth is disabled.
     #[arg(long, default_value = None, verbatim_doc_comment)]
     listen_pg_tenant_only: Option<String>,
+    /// Optional authenticated native-append listener with isolated ingest workers.
+    #[arg(long, default_value = None)]
+    listen_native_wal: Option<String>,
     /// Listen http endpoint for management and metrics in the form host:port.
     #[arg(long, default_value = DEFAULT_HTTP_LISTEN_ADDR)]
     listen_http: String,
@@ -119,6 +122,15 @@ struct Args {
     /// Do not wait for changes to be written safely to disk. Unsafe.
     #[arg(short, long)]
     no_sync: bool,
+    /// WAL segment I/O scheduler. Inline is experimental and preserves fsync.
+    #[arg(long, value_enum, default_value = "tokio")]
+    wal_io_engine: safekeeper::wal_storage::WalIoEngine,
+    /// Experimental maximum batch formation delay; requires owned ingestion.
+    #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u64).range(0..=1000))]
+    wal_batch_delay_us: u64,
+    /// Enable the experimental authenticated native WAL append endpoint.
+    #[arg(long, default_value_t = false)]
+    enable_native_wal_api: bool,
     /// Dump control file at path specified by this argument and exit.
     #[arg(long)]
     dump_control_file: Option<Utf8PathBuf>,
@@ -419,11 +431,15 @@ async fn main() -> anyhow::Result<()> {
         my_id: id,
         listen_pg_addr: args.listen_pg,
         listen_pg_addr_tenant_only: args.listen_pg_tenant_only,
+        listen_native_wal_addr: args.listen_native_wal,
         listen_http_addr: args.listen_http,
         listen_https_addr: args.listen_https,
         advertise_pg_addr: args.advertise_pg,
         availability_zone: args.availability_zone,
         no_sync: args.no_sync,
+        wal_io_engine: args.wal_io_engine,
+        wal_batch_delay_us: args.wal_batch_delay_us,
+        enable_native_wal_api: args.enable_native_wal_api,
         broker_endpoint: args.broker_endpoint,
         broker_keepalive_interval: args.broker_keepalive_interval,
         heartbeat_timeout: args.heartbeat_timeout,
@@ -466,6 +482,33 @@ async fn main() -> anyhow::Result<()> {
         max_global_disk_usage_ratio: args.max_global_disk_usage_ratio,
         /* END_HADRON */
     });
+
+    if conf.current_thread_runtime
+        && matches!(
+            conf.wal_io_engine,
+            safekeeper::wal_storage::WalIoEngine::Inline
+                | safekeeper::wal_storage::WalIoEngine::Direct
+        )
+    {
+        anyhow::bail!("inline/direct WAL I/O requires a multi-thread Tokio runtime");
+    }
+
+    conf.wal_io_engine.initialize().await?;
+    if conf.enable_native_wal_api && conf.http_auth.is_none() {
+        anyhow::bail!("native WAL API requires HTTP JWT authentication");
+    }
+    if conf.listen_native_wal_addr.is_some()
+        && (!conf.enable_native_wal_api || conf.pg_auth.is_none() || conf.current_thread_runtime)
+    {
+        anyhow::bail!(
+            "dedicated native WAL listener requires native API, PostgreSQL JWT authentication and separate runtimes"
+        );
+    }
+    if conf.wal_batch_delay_us != 0
+        && (!cfg!(target_os = "linux") || !conf.wal_io_engine.uses_owned_ingest())
+    {
+        anyhow::bail!("WAL batch delay requires Linux owned ingestion");
+    }
 
     // initialize sentry if SENTRY_DSN is provided
     let _sentry_guard = init_sentry(
@@ -623,6 +666,24 @@ async fn start_safekeeper(conf: Arc<SafeKeeperConf>) -> Result<()> {
         // wrap with task name for error reporting
         .map(|res| ("WAL service main".to_owned(), res));
     tasks_handles.push(Box::pin(wal_service_handle));
+
+    if let Some(address) = &conf.listen_native_wal_addr {
+        info!("starting isolated native WAL ingest on {address}");
+        let listener = tcp_listener::bind(address.clone()).context("bind native WAL listener")?;
+        let native = WAL_SERVICE_RUNTIME
+            .handle()
+            .spawn(wal_service::native_task_main(
+                conf.clone(),
+                listener,
+                Scope::SafekeeperData,
+                conf.enable_tls_wal_service_api
+                    .then(|| tls_server_config.clone())
+                    .flatten(),
+                global_timelines.clone(),
+            ))
+            .map(|result| ("native WAL listener".to_owned(), result));
+        tasks_handles.push(Box::pin(native));
+    }
 
     let global_timelines_ = global_timelines.clone();
     let timeline_housekeeping_handle = current_thread_rt

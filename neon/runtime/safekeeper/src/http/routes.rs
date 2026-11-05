@@ -13,6 +13,7 @@ use http_utils::failpoints::failpoints_handler;
 use http_utils::json::{json_request, json_response};
 use http_utils::request::{ensure_no_body, parse_query_param, parse_request_param};
 use http_utils::{RequestExt, RouterBuilder};
+use hyper::body::HttpBody;
 use hyper::{Body, Request, Response, StatusCode};
 use pem::Pem;
 use postgres_ffi::WAL_SEGMENT_SIZE;
@@ -47,6 +48,90 @@ async fn status_handler(request: Request<Body>) -> Result<Response<Body>, ApiErr
     let conf = get_conf(&request);
     let status = SafekeeperStatus { id: conf.my_id };
     json_response(StatusCode::OK, status)
+}
+
+/// Experimental data-plane transport. Accepted disk/state operations outlive
+/// client disconnects; the owned admission permit bounds their total count.
+async fn native_wal_append_handler(mut request: Request<Body>) -> Result<Response<Body>, ApiError> {
+    let binary_response = request
+        .headers()
+        .get(hyper::header::ACCEPT)
+        .and_then(|h| h.to_str().ok())
+        == Some("application/vnd.neon.wal-progress-v1");
+    let node_id = get_conf(&request).my_id.0;
+    let ttid = TenantTimelineId::new(
+        parse_request_param(&request, "tenant_id")?,
+        parse_request_param(&request, "timeline_id")?,
+    );
+    check_permission(&request, Some(ttid.tenant_id))?;
+    if !get_conf(&request).enable_native_wal_api {
+        return json_response(
+            StatusCode::NOT_FOUND,
+            serde_json::json!({"error":"native WAL transport is disabled"}),
+        );
+    }
+    static ADMISSION: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
+    let permit = ADMISSION
+        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(64)))
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| ApiError::TooManyRequests("native WAL admission is full".into()))?;
+    if request
+        .headers()
+        .get(hyper::header::CONTENT_TYPE)
+        .and_then(|h| h.to_str().ok())
+        != Some("application/octet-stream")
+    {
+        return Err(ApiError::BadRequest(anyhow::anyhow!(
+            "application/octet-stream is required"
+        )));
+    }
+    let flush: bool = parse_query_param(&request, "flush")?.unwrap_or(true);
+    let body = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        let mut bytes = bytes::BytesMut::new();
+        while let Some(chunk) = request.body_mut().data().await {
+            let chunk = chunk.map_err(|error| ApiError::BadRequest(error.into()))?;
+            if chunk.len() > crate::native_wal::MAX_BODY_BYTES - bytes.len() {
+                return Err(ApiError::BadRequest(anyhow::anyhow!(
+                    "native WAL frame exceeds the body limit"
+                )));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok::<_, ApiError>(bytes.freeze())
+    })
+    .await
+    .map_err(|_| ApiError::Timeout("native WAL body deadline exceeded".into()))??;
+    let append = crate::native_wal::parse_append(body).map_err(ApiError::BadRequest)?;
+    let timeline = get_global_timelines(&request).get(ttid)?;
+    let operation = crate::WAL_SERVICE_RUNTIME.spawn(async move {
+        let _permit = permit;
+        let resident = timeline.wal_residence_guard().await?;
+        resident.native_append(append, flush).await
+    });
+    let progress = operation
+        .await
+        .map_err(|error| ApiError::InternalServerError(error.into()))?
+        .map_err(ApiError::InternalServerError)?;
+    use crate::native_wal::AppendOutcome;
+    let status = match progress.outcome {
+        AppendOutcome::Appended | AppendOutcome::AlreadyPresent => StatusCode::OK,
+        AppendOutcome::Gap | AppendOutcome::Fenced | AppendOutcome::Mismatch => {
+            StatusCode::CONFLICT
+        }
+    };
+    if binary_response {
+        Ok(Response::builder()
+            .status(status)
+            .header(
+                hyper::header::CONTENT_TYPE,
+                "application/vnd.neon.wal-progress-v1",
+            )
+            .body(Body::from(progress.to_wire(node_id)))
+            .map_err(|error| ApiError::InternalServerError(error.into()))?)
+    } else {
+        json_response(status, progress)
+    }
 }
 
 fn get_conf(request: &Request<Body>) -> &SafeKeeperConf {
@@ -764,6 +849,9 @@ pub fn make_router(
         })
         .get("/v1/tenant/:tenant_id/timeline/:timeline_id", |r| {
             request_span(r, timeline_status_handler)
+        })
+        .post("/v1/tenant/:tenant_id/timeline/:timeline_id/wal", |r| {
+            request_span(r, native_wal_append_handler)
         })
         .delete("/v1/tenant/:tenant_id/timeline/:timeline_id", |r| {
             request_span(r, timeline_delete_handler)

@@ -878,6 +878,9 @@ pub struct SafeKeeper<CTRL: control_file::Storage, WAL: wal_storage::Storage> {
 
     pub state: TimelineState<CTRL>, // persistent state storage
     pub wal_store: WAL,
+    /// A resident native writer makes same-term control reconnects idempotent.
+    /// Not persisted: after restart native appends are fenced until Elected.
+    pub(crate) native_append_term: Option<Term>,
 
     node_id: NodeId, // safekeeper's node id
 }
@@ -909,6 +912,7 @@ where
             term_start_lsn: Lsn(0),
             state,
             wal_store,
+            native_append_term: None,
             node_id,
         })
     }
@@ -1136,6 +1140,20 @@ where
             return Ok(None);
         }
 
+        // A native data connection can advance after the control connection's
+        // vote snapshot. The existing divergence check must keep rejecting
+        // stale destructive truncation requests. For the exact already adopted
+        // native term/history, however, this is a control reconnect: leave WAL
+        // and its decoder untouched. A different term/history takes the normal
+        // election/recovery path below.
+        if self.native_append_term == Some(msg.term)
+            && self.term_start_lsn != Lsn::INVALID
+            && self.state.acceptor_state.term_history.0 == msg.term_history.0
+            && msg.start_streaming_at <= self.flush_lsn()
+        {
+            return Ok(None);
+        }
+
         // Before truncating WAL check-cross the check divergence point received
         // from the walproposer.
         let sk_th = self.get_term_history();
@@ -1197,6 +1215,7 @@ where
         }
 
         // truncate wal, update the LSNs
+        self.native_append_term = None;
         self.wal_store.truncate_wal(msg.start_streaming_at).await?;
 
         // and now adopt term history from proposer
@@ -1350,9 +1369,15 @@ where
 
         // do the job
         if !msg.wal_data.is_empty() {
-            self.wal_store
-                .write_wal(msg.h.begin_lsn, &msg.wal_data)
-                .await?;
+            if require_flush {
+                self.wal_store
+                    .write_wal_and_flush(msg.h.begin_lsn, &msg.wal_data)
+                    .await?;
+            } else {
+                self.wal_store
+                    .write_wal(msg.h.begin_lsn, &msg.wal_data)
+                    .await?;
+            }
         }
 
         // flush wal to the disk, if required
@@ -1393,6 +1418,14 @@ where
 
         let resp = self.append_response();
         Ok(Some(AcceptorProposerMessage::AppendResponse(resp)))
+    }
+
+    /// Native frames have already passed term/membership validation while the
+    /// caller holds the timeline guard. Preserve their commit propagation after
+    /// the shared flush; a fenced request cannot contribute its candidate.
+    pub(crate) async fn flush_native_batch(&mut self, commit: Lsn) -> Result<()> {
+        self.wal_store.flush_wal().await?;
+        self.update_commit_lsn(commit).await
     }
 
     /// Flush WAL to disk. Return AppendResponse with latest LSNs.
@@ -1682,6 +1715,203 @@ mod tests {
         sk.process_msg(&ProposerAcceptorMessage::AppendRequest(append_request))
             .await
             .unwrap_err();
+    }
+
+    #[tokio::test]
+    async fn test_native_batch_flush_proof() {
+        use crate::native_wal::{AppendOutcome, append_batch};
+        struct BatchStore {
+            written: Lsn,
+            flushed: Lsn,
+            flushes: usize,
+            fail: bool,
+        }
+        impl wal_storage::Storage for BatchStore {
+            fn write_lsn(&self) -> Lsn {
+                self.written
+            }
+            fn flush_lsn(&self) -> Lsn {
+                self.flushed
+            }
+            async fn initialize_first_segment(&mut self, _lsn: Lsn) -> Result<()> {
+                Ok(())
+            }
+            async fn write_wal(&mut self, start: Lsn, bytes: &[u8]) -> Result<()> {
+                self.written = start + bytes.len() as u64;
+                Ok(())
+            }
+            async fn truncate_wal(&mut self, end: Lsn) -> Result<()> {
+                self.written = end;
+                self.flushed = end;
+                Ok(())
+            }
+            async fn flush_wal(&mut self) -> Result<()> {
+                if self.flushed == self.written {
+                    return Ok(());
+                }
+                if self.fail {
+                    anyhow::bail!("injected batch flush failure");
+                }
+                self.flushed = self.written;
+                self.flushes += 1;
+                Ok(())
+            }
+            fn remove_up_to(&self, _segno: XLogSegNo) -> BoxFuture<'static, Result<()>> {
+                Box::pin(async { Ok(()) })
+            }
+            fn get_metrics(&self) -> crate::metrics::WalStorageMetrics {
+                Default::default()
+            }
+        }
+        let store = BatchStore {
+            written: Lsn(0),
+            flushed: Lsn(0),
+            flushes: 0,
+            fail: false,
+        };
+        let control = InMemoryState {
+            persisted_state: test_sk_state(),
+        };
+        let mut sk = SafeKeeper::new(TimelineState::new(control), store, NodeId(0)).unwrap();
+        sk.process_msg(&ProposerAcceptorMessage::Elected(ProposerElected {
+            generation: Generation::new(0),
+            term: 1,
+            start_streaming_at: Lsn(1),
+            term_history: TermHistory(vec![TermLsn {
+                term: 1,
+                lsn: Lsn(1),
+            }]),
+        }))
+        .await
+        .unwrap();
+        sk.wal_store.flushes = 0;
+        let request = |begin, commit, generation| AppendRequest {
+            h: AppendRequestHeader {
+                generation: Generation::new(generation),
+                term: 1,
+                begin_lsn: Lsn(begin),
+                end_lsn: Lsn(begin + 1),
+                commit_lsn: Lsn(commit),
+                truncate_lsn: Lsn(0),
+            },
+            wal_data: Bytes::from_static(b"w"),
+        };
+        let replies = append_batch(
+            &mut sk,
+            vec![request(1, 1, 0), request(2, 9999, 42), request(2, 2, 0)],
+        )
+        .await
+        .unwrap();
+        assert!(matches!(replies[0].outcome, AppendOutcome::Appended));
+        assert!(matches!(replies[1].outcome, AppendOutcome::Fenced));
+        assert!(matches!(replies[2].outcome, AppendOutcome::Appended));
+        assert_eq!(sk.wal_store.flushes, 1);
+        assert!(replies.iter().all(|reply| reply.flush_lsn == Lsn(3)));
+        assert_eq!(sk.state.inmem.commit_lsn, Lsn(2)); // Fenced candidate never advances commit.
+        let flushed = sk.wal_store.flushes;
+        let replies = append_batch(&mut sk, vec![request(3, 3, 0), request(4, 4, 0)])
+            .await
+            .unwrap();
+        assert_eq!(sk.wal_store.flushes, flushed + 1);
+        assert!(replies.iter().all(|reply| reply.flush_lsn == Lsn(5)));
+        assert_eq!(sk.state.inmem.commit_lsn, Lsn(4));
+        sk.wal_store.fail = true;
+        assert!(append_batch(&mut sk, vec![request(5, 5, 0)]).await.is_err());
+        assert_eq!(sk.wal_store.flushed, Lsn(5)); // No progress reply after a failed flush.
+        assert_eq!(sk.wal_store.written, Lsn(6));
+    }
+
+    #[tokio::test]
+    async fn test_native_same_term_control_reconnect() {
+        use crate::wal_storage::Storage as _;
+        for native in [false, true] {
+            let storage = InMemoryState {
+                persisted_state: test_sk_state(),
+            };
+            let mut sk = SafeKeeper::new(
+                TimelineState::new(storage),
+                DummyWalStore { lsn: Lsn(0) },
+                NodeId(0),
+            )
+            .unwrap();
+            let elected = ProposerElected {
+                generation: Generation::new(0),
+                term: 1,
+                start_streaming_at: Lsn(1),
+                term_history: TermHistory(vec![TermLsn {
+                    term: 1,
+                    lsn: Lsn(1),
+                }]),
+            };
+            sk.process_msg(&ProposerAcceptorMessage::Elected(elected.clone()))
+                .await
+                .unwrap();
+            let append = AppendRequest {
+                h: AppendRequestHeader {
+                    generation: Generation::new(0),
+                    term: 1,
+                    begin_lsn: Lsn(1),
+                    end_lsn: Lsn(2),
+                    commit_lsn: Lsn(0),
+                    truncate_lsn: Lsn(0),
+                },
+                wal_data: Bytes::from_static(b"w"),
+            };
+            if native {
+                crate::native_wal::append(&mut sk, append, true)
+                    .await
+                    .unwrap();
+            } else {
+                sk.process_msg(&ProposerAcceptorMessage::AppendRequest(append))
+                    .await
+                    .unwrap();
+            }
+            let reconnect = sk
+                .process_msg(&ProposerAcceptorMessage::Elected(elected))
+                .await;
+            // Legacy stale requests retain the original rejection safeguard.
+            // Native control reconnects preserve the immutable tail and decoder.
+            assert_eq!(reconnect.is_ok(), native);
+            assert_eq!(sk.wal_store.write_lsn(), Lsn(2));
+            if native {
+                let next = ProposerElected {
+                    generation: Generation::new(0),
+                    term: 2,
+                    start_streaming_at: Lsn(2),
+                    term_history: TermHistory(vec![
+                        TermLsn {
+                            term: 1,
+                            lsn: Lsn(1),
+                        },
+                        TermLsn {
+                            term: 2,
+                            lsn: Lsn(2),
+                        },
+                    ]),
+                };
+                sk.process_msg(&ProposerAcceptorMessage::Elected(next))
+                    .await
+                    .unwrap();
+                assert_eq!(sk.native_append_term, None);
+                let old = AppendRequest {
+                    h: AppendRequestHeader {
+                        generation: Generation::new(0),
+                        term: 1,
+                        begin_lsn: Lsn(2),
+                        end_lsn: Lsn(3),
+                        commit_lsn: Lsn(0),
+                        truncate_lsn: Lsn(0),
+                    },
+                    wal_data: Bytes::from_static(b"x"),
+                };
+                let progress = crate::native_wal::append(&mut sk, old, true).await.unwrap();
+                assert!(matches!(
+                    progress.outcome,
+                    crate::native_wal::AppendOutcome::Fenced
+                ));
+                assert_eq!(sk.wal_store.write_lsn(), Lsn(2));
+            }
+        }
     }
 
     #[test]

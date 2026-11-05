@@ -336,6 +336,7 @@ impl SharedState {
                     &timeline_dir,
                     &control_store,
                     conf.no_sync,
+                    conf.wal_io_engine,
                 )?;
                 StateSK::Loaded(SafeKeeper::new(
                     TimelineState::new(control_store),
@@ -1106,6 +1107,32 @@ impl WalResidentTimeline {
     }
     // END HADRON
 
+    /// Append within the resident timeline's exclusive state guard.
+    pub async fn native_append(
+        &self,
+        request: crate::safekeeper::AppendRequest,
+        flush: bool,
+    ) -> Result<crate::native_wal::AppendProgress> {
+        if self.is_cancelled() {
+            bail!(TimelineError::Cancelled(self.ttid));
+        }
+        let mut shared = self.write_shared_state().await;
+        self.hadron_check_disk_usage(&mut shared)?;
+        crate::native_wal::append(shared.sk.safekeeper(), request, flush).await
+    }
+
+    pub async fn native_append_batch(
+        &self,
+        requests: Vec<crate::safekeeper::AppendRequest>,
+    ) -> Result<Vec<crate::native_wal::AppendProgress>> {
+        if self.is_cancelled() {
+            bail!(TimelineError::Cancelled(self.ttid));
+        }
+        let mut shared = self.write_shared_state().await;
+        self.hadron_check_disk_usage(&mut shared)?;
+        crate::native_wal::append_batch(shared.sk.safekeeper(), requests).await
+    }
+
     /// Pass arrived message to the safekeeper.
     pub async fn process_msg(
         &self,
@@ -1125,7 +1152,38 @@ impl WalResidentTimeline {
             // safekeeper connections every second until it can successfully propose WAL to the SK again.
             self.hadron_check_disk_usage(&mut shared_state)?;
             // END HADRON
-            rmsg = shared_state.sk.safekeeper().process_msg(msg).await?;
+            // A transferred data owner may advance WAL while the proposer's
+            // control-only heartbeat is in flight. Rebase only empty appends;
+            // data-bearing legacy appends retain the strict sequential check.
+            let rebased;
+            let effective = if self.conf.enable_native_wal_api {
+                match msg {
+                    ProposerAcceptorMessage::AppendRequest(append)
+                    | ProposerAcceptorMessage::NoFlushAppendRequest(append)
+                        if append.wal_data.is_empty()
+                            && append.h.begin_lsn
+                                <= shared_state.sk.safekeeper().wal_store.write_lsn() =>
+                    {
+                        let mut header = append.h.clone();
+                        header.begin_lsn = shared_state.sk.safekeeper().wal_store.write_lsn();
+                        header.end_lsn = header.begin_lsn;
+                        let append = crate::safekeeper::AppendRequest {
+                            h: header,
+                            wal_data: bytes::Bytes::new(),
+                        };
+                        rebased = if matches!(msg, ProposerAcceptorMessage::AppendRequest(_)) {
+                            ProposerAcceptorMessage::AppendRequest(append)
+                        } else {
+                            ProposerAcceptorMessage::NoFlushAppendRequest(append)
+                        };
+                        &rebased
+                    }
+                    _ => msg,
+                }
+            } else {
+                msg
+            };
+            rmsg = shared_state.sk.safekeeper().process_msg(effective).await?;
 
             // if this is AppendResponse, fill in proper hot standby feedback.
             if let Some(AcceptorProposerMessage::AppendResponse(ref mut resp)) = rmsg {
@@ -1254,6 +1312,7 @@ impl ManagerTimeline {
             &self.timeline_dir,
             shared.sk.state(),
             self.conf.no_sync,
+            self.conf.wal_io_engine,
         )?;
 
         // updating control file

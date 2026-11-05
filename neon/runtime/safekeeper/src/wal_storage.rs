@@ -24,7 +24,7 @@ use pq_proto::SystemId;
 use remote_storage::RemotePath;
 use std::sync::Arc;
 use tokio::fs::{self, File, OpenOptions, remove_file};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt};
 use tracing::*;
 use utils::crashsafe::durable_rename;
 use utils::id::TenantTimelineId;
@@ -37,7 +37,53 @@ use crate::metrics::{
 use crate::state::TimelinePersistentState;
 use crate::wal_backup::{WalBackup, read_object, remote_timeline_path};
 
-pub trait Storage {
+mod recent_wal;
+mod segment_file;
+use recent_wal::RecentWal;
+pub use segment_file::WalIoEngine;
+use segment_file::WalSegmentFile;
+
+tokio::task_local! { static NATIVE_INGEST_IO: (); }
+
+/// Only the dedicated native listener grants this task-scoped capability.
+/// Child tasks do not inherit it; ordinary/control I/O keeps its async executor.
+pub(crate) async fn native_ingest_scope<F: Future>(operation: F) -> F::Output {
+    NATIVE_INGEST_IO.scope((), operation).await
+}
+
+fn native_inline_io() -> bool {
+    NATIVE_INGEST_IO.try_with(|_| ()).is_ok()
+}
+
+#[cfg(test)]
+mod native_io_scope_tests {
+    #[tokio::test]
+    async fn capability_stays_with_native_task() {
+        assert!(!super::native_inline_io());
+        super::native_ingest_scope(async {
+            assert!(super::native_inline_io());
+            tokio::task::yield_now().await;
+            assert!(super::native_inline_io());
+            assert!(
+                !tokio::spawn(async { super::native_inline_io() })
+                    .await
+                    .unwrap()
+            );
+        })
+        .await;
+        assert!(!super::native_inline_io());
+    }
+}
+
+pub trait Storage: Send {
+    /// Compare an already accepted prefix before acknowledging a retried append.
+    fn verify_wal(
+        &mut self,
+        _start: Lsn,
+        _data: &[u8],
+    ) -> impl Future<Output = Result<bool>> + Send {
+        async { bail!("WAL byte verification is unavailable for this storage backend") }
+    }
     // Last written LSN.
     fn write_lsn(&self) -> Lsn;
     /// LSN of last durably stored WAL record.
@@ -54,6 +100,19 @@ pub trait Storage {
 
     /// Write piece of WAL from buf to disk, but not necessarily sync it.
     fn write_wal(&mut self, startpos: Lsn, buf: &[u8]) -> impl Future<Output = Result<()>> + Send;
+
+    /// Append and durably complete a batch. Backends may fuse the write and
+    /// synchronization, but must not publish a durable prefix before completion.
+    fn write_wal_and_flush(
+        &mut self,
+        startpos: Lsn,
+        buf: &[u8],
+    ) -> impl Future<Output = Result<()>> + Send {
+        async move {
+            self.write_wal(startpos, buf).await?;
+            self.flush_wal().await
+        }
+    }
 
     /// Truncate WAL at specified LSN, which must be the end of WAL record.
     fn truncate_wal(&mut self, end_pos: Lsn) -> impl Future<Output = Result<()>> + Send;
@@ -135,7 +194,11 @@ pub struct PhysicalStorage {
     /// - has ".partial" suffix
     /// - points to write_lsn, so no seek is needed for writing
     /// - doesn't point to the end of the segment
-    file: Option<File>,
+    file: Option<WalSegmentFile>,
+    io_engine: WalIoEngine,
+    /// Allocated only after native retry verification is first used. Ordinary
+    /// WAL ingestion pays no 64 KiB cache allocation or byte copying.
+    recent_wal: Option<RecentWal>,
 
     /// When true, WAL truncation potentially has been interrupted and we need
     /// to finish it before allowing WAL writes; see truncate_wal for details.
@@ -170,6 +233,7 @@ impl PhysicalStorage {
         timeline_dir: &Utf8Path,
         state: &TimelinePersistentState,
         no_sync: bool,
+        io_engine: WalIoEngine,
     ) -> Result<PhysicalStorage> {
         let wal_seg_size = state.server.wal_seg_size as usize;
 
@@ -223,6 +287,8 @@ impl PhysicalStorage {
             metrics: WalStorageMetrics::default(),
             timeline_dir: timeline_dir.to_path_buf(),
             no_sync,
+            io_engine,
+            recent_wal: None,
             wal_seg_size,
             pg_version: state.server.pg_version,
             system_id: state.server.system_id,
@@ -250,7 +316,7 @@ impl PhysicalStorage {
     }
 
     /// Call fsync if config requires so.
-    async fn fsync_file(&mut self, file: &File) -> Result<()> {
+    async fn fsync_file(&mut self, file: &WalSegmentFile) -> Result<()> {
         if !self.no_sync {
             self.metrics
                 .observe_flush_seconds(time_io_closure(file.sync_all()).await?);
@@ -259,7 +325,7 @@ impl PhysicalStorage {
     }
 
     /// Call fdatasync if config requires so.
-    async fn fdatasync_file(&mut self, file: &File) -> Result<()> {
+    async fn fdatasync_file(&mut self, file: &WalSegmentFile) -> Result<()> {
         if !self.no_sync {
             self.metrics
                 .observe_flush_seconds(time_io_closure(file.sync_data()).await?);
@@ -269,20 +335,20 @@ impl PhysicalStorage {
 
     /// Open or create WAL segment file. Caller must call seek to the wanted position.
     /// Returns `file` and `is_partial`.
-    async fn open_or_create(&mut self, segno: XLogSegNo) -> Result<(File, bool)> {
+    async fn open_or_create(&mut self, segno: XLogSegNo) -> Result<(WalSegmentFile, bool)> {
         let (wal_file_path, wal_file_partial_path) =
             wal_file_paths(&self.timeline_dir, segno, self.wal_seg_size);
 
         // Try to open already completed segment
         if let Ok(file) = OpenOptions::new().write(true).open(&wal_file_path).await {
-            Ok((file, false))
+            Ok((WalSegmentFile::new(file, self.io_engine).await?, false))
         } else if let Ok(file) = OpenOptions::new()
             .write(true)
             .open(&wal_file_partial_path)
             .await
         {
             // Try to open existing partial file
-            Ok((file, true))
+            Ok((WalSegmentFile::new(file, self.io_engine).await?, true))
         } else {
             let _timer = WAL_STORAGE_OPERATION_SECONDS
                 .with_label_values(&["initialize_segment"])
@@ -315,13 +381,19 @@ impl PhysicalStorage {
                     .or_else(utils::fs_ext::ignore_not_found)?;
                 return Err(e.into());
             }
-            Ok((file, true))
+            Ok((WalSegmentFile::new(file, self.io_engine).await?, true))
         }
     }
 
-    /// Write WAL bytes, which are known to be located in a single WAL segment. Returns true if the
-    /// segment was completed, closed, and flushed to disk.
-    async fn write_in_segment(&mut self, segno: u64, xlogoff: usize, buf: &[u8]) -> Result<bool> {
+    /// Write bytes within one segment. Return true when these bytes were synced,
+    /// either explicitly by the batch or because the segment was completed.
+    async fn write_in_segment(
+        &mut self,
+        segno: u64,
+        xlogoff: usize,
+        buf: &[u8],
+        durable: bool,
+    ) -> Result<bool> {
         let mut file = if let Some(file) = self.file.take() {
             file
         } else {
@@ -331,7 +403,14 @@ impl PhysicalStorage {
             file
         };
 
-        file.write_all(buf).await?;
+        if durable {
+            let sync_time = file.write_and_sync_data(buf, !self.no_sync).await?;
+            if !self.no_sync {
+                self.metrics.observe_flush_seconds(sync_time.as_secs_f64());
+            }
+        } else {
+            file.write_all(buf).await?;
+        }
         // Note: flush just ensures write above reaches the OS (this is not
         // needed in case of sync IO as Write::write there calls directly write
         // syscall, but needed in case of async). It does *not* fsyncs the file.
@@ -339,7 +418,9 @@ impl PhysicalStorage {
 
         if xlogoff + buf.len() == self.wal_seg_size {
             // If we reached the end of a WAL segment, flush and close it.
-            self.fdatasync_file(&file).await?;
+            if !durable {
+                self.fdatasync_file(&file).await?;
+            }
 
             // Rename partial file to completed file
             let (wal_file_path, wal_file_partial_path) =
@@ -349,92 +430,12 @@ impl PhysicalStorage {
         } else {
             // otherwise, file can be reused later
             self.file = Some(file);
-            Ok(false)
+            Ok(durable)
         }
-    }
-
-    /// Writes WAL to the segment files, until everything is writed. If some segments
-    /// are fully written, they are flushed to disk. The last (partial) segment can
-    /// be flushed separately later.
-    ///
-    /// Updates `write_lsn` and `flush_lsn`.
-    async fn write_exact(&mut self, pos: Lsn, mut buf: &[u8]) -> Result<()> {
-        // TODO: this shouldn't be possible, except possibly with write_lsn == 0.
-        // Rename this method to `append_exact`, and make it append-only, removing
-        // the `pos` parameter and this check. For this reason, we don't update
-        // `flush_lsn` here.
-        if self.write_lsn != pos {
-            // need to flush the file before discarding it
-            if let Some(file) = self.file.take() {
-                self.fdatasync_file(&file).await?;
-            }
-
-            self.write_lsn = pos;
-        }
-
-        while !buf.is_empty() {
-            // Extract WAL location for this block
-            let xlogoff = self.write_lsn.segment_offset(self.wal_seg_size);
-            let segno = self.write_lsn.segment_number(self.wal_seg_size);
-
-            // If crossing a WAL boundary, only write up until we reach wal segment size.
-            let bytes_write = if xlogoff + buf.len() > self.wal_seg_size {
-                self.wal_seg_size - xlogoff
-            } else {
-                buf.len()
-            };
-
-            let flushed = self
-                .write_in_segment(segno, xlogoff, &buf[..bytes_write])
-                .await
-                /* BEGIN_HADRON */
-                .inspect_err(|_| WAL_DISK_IO_ERRORS.inc())?;
-            /* END_HADRON */
-
-            self.write_lsn += bytes_write as u64;
-            if flushed {
-                self.flush_lsn = self.write_lsn;
-            }
-            buf = &buf[bytes_write..];
-        }
-
-        Ok(())
-    }
-}
-
-impl Storage for PhysicalStorage {
-    // Last written LSN.
-    fn write_lsn(&self) -> Lsn {
-        self.write_lsn
-    }
-    /// flush_lsn returns LSN of last durably stored WAL record.
-    ///
-    /// TODO: flush_lsn() returns flush_record_lsn, but write_lsn() returns write_lsn: confusing.
-    #[allow(clippy::misnamed_getters)]
-    fn flush_lsn(&self) -> Lsn {
-        self.flush_record_lsn
-    }
-
-    async fn initialize_first_segment(&mut self, init_lsn: Lsn) -> Result<()> {
-        let _timer = WAL_STORAGE_OPERATION_SECONDS
-            .with_label_values(&["initialize_first_segment"])
-            .start_timer();
-
-        let segno = init_lsn.segment_number(self.wal_seg_size);
-        let (mut file, _) = self.open_or_create(segno).await?;
-        let major_pg_version = PgMajorVersion::try_from(self.pg_version).unwrap();
-        let wal_seg =
-            postgres_ffi::generate_wal_segment(segno, self.system_id, major_pg_version, init_lsn)?;
-        file.seek(SeekFrom::Start(0)).await?;
-        file.write_all(&wal_seg).await?;
-        file.flush().await?;
-        info!("initialized segno {} at lsn {}", segno, init_lsn);
-        // note: file is *not* fsynced
-        Ok(())
     }
 
     /// Write WAL to disk.
-    async fn write_wal(&mut self, startpos: Lsn, buf: &[u8]) -> Result<()> {
+    async fn append_wal(&mut self, startpos: Lsn, buf: &[u8], durable: bool) -> Result<()> {
         // Disallow any non-sequential writes, which can result in gaps or overwrites.
         // If we need to move the pointer, use truncate_wal() instead.
         if self.write_lsn > startpos {
@@ -459,7 +460,10 @@ impl Storage for PhysicalStorage {
             );
         }
 
-        let write_seconds = time_io_closure(self.write_exact(startpos, buf)).await?;
+        let write_seconds = time_io_closure(self.write_exact(startpos, buf, durable)).await?;
+        if let Some(recent) = self.recent_wal.as_mut() {
+            recent.remember(startpos.0, buf);
+        }
         // WAL is written, updating write metrics
         self.metrics.observe_write_seconds(write_seconds);
         self.metrics.observe_write_bytes(buf.len());
@@ -492,6 +496,143 @@ impl Storage for PhysicalStorage {
         Ok(())
     }
 
+    /// Writes WAL to the segment files, until everything is writed. If some segments
+    /// are fully written, they are flushed to disk. The last (partial) segment can
+    /// be flushed separately later.
+    ///
+    /// Updates `write_lsn` and `flush_lsn`.
+    async fn write_exact(&mut self, pos: Lsn, mut buf: &[u8], durable: bool) -> Result<()> {
+        // TODO: this shouldn't be possible, except possibly with write_lsn == 0.
+        // Rename this method to `append_exact`, and make it append-only, removing
+        // the `pos` parameter and this check. For this reason, we don't update
+        // `flush_lsn` here.
+        if self.write_lsn != pos {
+            // need to flush the file before discarding it
+            if let Some(file) = self.file.take() {
+                self.fdatasync_file(&file).await?;
+            }
+
+            self.write_lsn = pos;
+        }
+
+        while !buf.is_empty() {
+            // Extract WAL location for this block
+            let xlogoff = self.write_lsn.segment_offset(self.wal_seg_size);
+            let segno = self.write_lsn.segment_number(self.wal_seg_size);
+
+            // If crossing a WAL boundary, only write up until we reach wal segment size.
+            let bytes_write = if xlogoff + buf.len() > self.wal_seg_size {
+                self.wal_seg_size - xlogoff
+            } else {
+                buf.len()
+            };
+
+            let flushed = self
+                .write_in_segment(segno, xlogoff, &buf[..bytes_write], durable)
+                .await
+                /* BEGIN_HADRON */
+                .inspect_err(|_| WAL_DISK_IO_ERRORS.inc())?;
+            /* END_HADRON */
+
+            self.write_lsn += bytes_write as u64;
+            if flushed {
+                self.flush_lsn = self.write_lsn;
+            }
+            buf = &buf[bytes_write..];
+        }
+
+        Ok(())
+    }
+}
+
+impl Storage for PhysicalStorage {
+    async fn verify_wal(&mut self, mut start: Lsn, mut data: &[u8]) -> Result<bool> {
+        let end = start
+            .0
+            .checked_add(data.len() as u64)
+            .context("WAL verification range overflow")?;
+        if end > self.write_lsn.0 {
+            return Ok(false);
+        }
+        if data.is_empty() {
+            return Ok(true);
+        }
+        let recent = self.recent_wal.get_or_insert_with(RecentWal::new);
+        if let Some(matches) = recent.matches(start.0, data) {
+            crate::metrics::WAL_REPLAY_CACHE_HITS.inc();
+            return Ok(matches);
+        }
+        crate::metrics::WAL_REPLAY_CACHE_MISSES.inc();
+        let mut buffer = vec![0u8; data.len().min(64 * 1024)];
+        while !data.is_empty() {
+            let offset = start.segment_offset(self.wal_seg_size);
+            let segment = start.segment_number(self.wal_seg_size);
+            let (complete, partial) =
+                wal_file_paths(&self.timeline_dir, segment, self.wal_seg_size);
+            let mut file = match File::open(&complete).await {
+                Ok(file) => file,
+                Err(error) if error.kind() == ErrorKind::NotFound => File::open(&partial).await?,
+                Err(error) => return Err(error.into()),
+            };
+            file.seek(SeekFrom::Start(offset as u64)).await?;
+            let size = data.len().min(self.wal_seg_size - offset);
+            let mut checked = 0;
+            while checked < size {
+                let count = (size - checked).min(buffer.len());
+                file.read_exact(&mut buffer[..count]).await?;
+                if buffer[..count] != data[checked..checked + count] {
+                    return Ok(false);
+                }
+                checked += count;
+            }
+            start += size as u64;
+            data = &data[size..];
+        }
+        Ok(true)
+    }
+    // Last written LSN.
+    fn write_lsn(&self) -> Lsn {
+        self.write_lsn
+    }
+    /// flush_lsn returns LSN of last durably stored WAL record.
+    ///
+    /// TODO: flush_lsn() returns flush_record_lsn, but write_lsn() returns write_lsn: confusing.
+    #[allow(clippy::misnamed_getters)]
+    fn flush_lsn(&self) -> Lsn {
+        self.flush_record_lsn
+    }
+
+    async fn initialize_first_segment(&mut self, init_lsn: Lsn) -> Result<()> {
+        let _timer = WAL_STORAGE_OPERATION_SECONDS
+            .with_label_values(&["initialize_first_segment"])
+            .start_timer();
+
+        let segno = init_lsn.segment_number(self.wal_seg_size);
+        let (mut file, _) = self.open_or_create(segno).await?;
+        let major_pg_version = PgMajorVersion::try_from(self.pg_version).unwrap();
+        let wal_seg =
+            postgres_ffi::generate_wal_segment(segno, self.system_id, major_pg_version, init_lsn)?;
+        file.seek(SeekFrom::Start(0)).await?;
+        file.write_all(&wal_seg).await?;
+        file.flush().await?;
+        info!("initialized segno {} at lsn {}", segno, init_lsn);
+        // note: file is *not* fsynced
+        Ok(())
+    }
+
+    async fn write_wal(&mut self, startpos: Lsn, buf: &[u8]) -> Result<()> {
+        self.append_wal(startpos, buf, false).await
+    }
+
+    async fn write_wal_and_flush(&mut self, startpos: Lsn, buf: &[u8]) -> Result<()> {
+        if matches!(self.io_engine, WalIoEngine::Owned | WalIoEngine::Direct) {
+            self.append_wal(startpos, buf, true).await?;
+            self.flush_wal().await
+        } else {
+            self.write_wal(startpos, buf).await?;
+            self.flush_wal().await
+        }
+    }
     async fn flush_wal(&mut self) -> Result<()> {
         if self.flush_record_lsn == self.write_record_lsn {
             // no need to do extra flush
@@ -561,6 +702,7 @@ impl Storage for PhysicalStorage {
         // Protocol (HandleElected before first AppendRequest) ensures we'll
         // always try to ensure clean truncation before any writes.
         self.pending_wal_truncation = true;
+        self.recent_wal = None;
 
         self.write_lsn = end_pos;
         self.flush_lsn = end_pos;

@@ -25,6 +25,41 @@ use crate::receive_wal::MSG_QUEUE_SIZE;
 use crate::state::{TimelineMemState, TimelinePersistentState};
 
 // Global metrics across all timelines.
+pub static NATIVE_WAL_BATCHES: Lazy<IntCounter> = Lazy::new(|| {
+    register_int_counter!(
+        "safekeeper_native_wal_batches_total",
+        "Completed native COPY append batches"
+    )
+    .unwrap()
+});
+pub static NATIVE_WAL_BATCH_FRAMES: Lazy<IntCounter> = Lazy::new(|| {
+    register_int_counter!(
+        "safekeeper_native_wal_batch_frames_total",
+        "Frames in completed native COPY append batches"
+    )
+    .unwrap()
+});
+pub static NATIVE_WAL_INLINE_WRITES: Lazy<IntCounter> = Lazy::new(|| {
+    register_int_counter!(
+        "safekeeper_native_wal_inline_writes_total",
+        "Owned writes executed on dedicated native ingest workers"
+    )
+    .unwrap()
+});
+pub static WAL_REPLAY_CACHE_HITS: Lazy<IntCounter> = Lazy::new(|| {
+    register_int_counter!(
+        "safekeeper_wal_replay_cache_hits_total",
+        "Native duplicate ranges compared against recently written resident bytes"
+    )
+    .unwrap()
+});
+pub static WAL_REPLAY_CACHE_MISSES: Lazy<IntCounter> = Lazy::new(|| {
+    register_int_counter!(
+        "safekeeper_wal_replay_cache_misses_total",
+        "Native duplicate ranges requiring a stored WAL read"
+    )
+    .unwrap()
+});
 pub static WRITE_WAL_BYTES: Lazy<Histogram> = Lazy::new(|| {
     register_histogram!(
         "safekeeper_write_wal_bytes",

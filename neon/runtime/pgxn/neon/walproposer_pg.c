@@ -53,6 +53,7 @@
 #include "neon_walreader.h"
 #include "walproposer.h"
 #include "bounded_commit_guard.h"
+#include "native_quorum.h"
 
 #define XLOG_HDR_SIZE (1 + 8 * 3)	/* 'w' + startPos + walEnd + timestamp */
 #define XLOG_HDR_START_POS 1	/* offset of start position in wal sender*
@@ -82,6 +83,7 @@ static uint64 kRateLimitMaxBatchUSecs = 300 * USECS_PER_SEC;
 
 /* Set to true in the walproposer bgw. */
 static bool am_walproposer;
+static bool native_reconnect_pending[MAX_SAFEKEEPERS];
 static WalproposerShmemState *walprop_shared;
 static WalProposerConfig walprop_config;
 static XLogRecPtr sentPtr = InvalidXLogRecPtr;
@@ -213,6 +215,7 @@ pg_init_walproposer(void)
 
 	nwp_register_gucs();
 	BoundedCommitGuardInit();
+	NativeQuorumInit();
 
 	delay_backend_us = &startup_backpressure_wrap;
 	PrevProcessInterruptsCallback = ProcessInterruptsCallback;
@@ -604,6 +607,7 @@ WalproposerShmemInit(void)
 		/* END_HADRON */
 	}
 	BoundedCommitGuardShmemInit();
+	NativeQuorumShmemInit();
 }
 
 static void
@@ -718,6 +722,7 @@ WalproposerShmemRequest(void)
 {
 	RequestAddinShmemSpace(WalproposerShmemSize());
 	BoundedCommitGuardShmemRequest();
+	NativeQuorumShmemRequest();
 }
 
 WalproposerShmemState *
@@ -905,6 +910,7 @@ walprop_pg_init_bgworker(void)
 #endif
 
 	BoundedCommitGuardReset();
+	NativeQuorumReset();
 
 	/* Establish signal handlers. */
 	pqsignal(SIGUSR1, procsignal_sigusr1_handler);
@@ -1581,6 +1587,10 @@ XLogBroadcastWalProposer(WalProposer *wp)
 	TimestampTz now = 0;
 	int effective_max_wal_bytes_per_second = 0;
 
+	/* At a drained boundary, transfer data submission to the native group
+	 * provider. Keep broadcasting the local frontier for control/recovery. */
+	NativeQuorumPump(wp);
+
 	/* Start from the last sent position */
 	startptr = sentPtr;
 
@@ -1668,7 +1678,12 @@ XLogBroadcastWalProposer(WalProposer *wp)
 	}
 	/* END_HADRON */
 
-	WalProposerBroadcast(wp, startptr, endptr);
+	if (NativeQuorumControlOnly(&wp->safekeeper[0]))
+		/* The native owner submits data and explicitly publishes commit
+		 * frontiers. Avoid a duplicate control RPC on every local flush. */
+		wp->availableLsn = endptr;
+	else
+		WalProposerBroadcast(wp, startptr, endptr);
 	sentPtr = endptr;
 
 	/* Update shared memory status */
@@ -1753,6 +1768,9 @@ walprop_pg_wal_reader_events(Safekeeper *sk)
 }
 
 static WaitEventSet *waitEvents;
+static int nativeEventFD[MAX_SAFEKEEPERS];
+static int nativeEventPos[MAX_SAFEKEEPERS];
+static uint64 nativeEventVersion[MAX_SAFEKEEPERS];
 
 static void
 walprop_pg_free_event_set(WalProposer *wp)
@@ -1779,9 +1797,9 @@ walprop_pg_init_event_set(WalProposer *wp)
 
 	/* for each sk, we have socket plus potentially socket for neon walreader */
 #if PG_MAJORVERSION_NUM >= 17
-	waitEvents = CreateWaitEventSet(NULL, 2 + 2 * wp->n_safekeepers);
+	waitEvents = CreateWaitEventSet(NULL, 2 + (NativeQuorumSenderOwned() ? 3 : 2) * wp->n_safekeepers);
 #else
-	waitEvents = CreateWaitEventSet(TopMemoryContext, 2 + 2 * wp->n_safekeepers);
+	waitEvents = CreateWaitEventSet(TopMemoryContext, 2 + (NativeQuorumSenderOwned() ? 3 : 2) * wp->n_safekeepers);
 #endif
 	AddWaitEventToSet(waitEvents, WL_LATCH_SET, PGINVALID_SOCKET,
 					  MyLatch, NULL);
@@ -1790,6 +1808,10 @@ walprop_pg_init_event_set(WalProposer *wp)
 
 	for (int i = 0; i < wp->n_safekeepers; i++)
 	{
+		uint32 native_events;
+		nativeEventFD[i] = NativeQuorumSenderSocket(i,&native_events,&nativeEventVersion[i]);
+		nativeEventPos[i] = nativeEventFD[i] < 0 ? -1 :
+			AddWaitEventToSet(waitEvents,native_events,nativeEventFD[i],NULL,NULL);
 		wp->safekeeper[i].eventPos = -1;
 		wp->safekeeper[i].nwrEventPos = -1;
 		wp->safekeeper[i].nwrConnEstablished = false;
@@ -1969,12 +1991,47 @@ walprop_pg_wait_event_set(WalProposer *wp, long timeout, Safekeeper **sk, uint32
 	WaitEvent	event = {0};
 	int			rc = 0;
 	bool		late_cv_trigger = false;
+	bool		native_owner = wp->n_safekeepers > 0 && NativeQuorumControlOnly(&wp->safekeeper[0]);
+	bool		sender_owner = native_owner && NativeQuorumSenderOwned();
+	bool		native_preflight = NativeQuorumPreflightPending();
 
 	*sk = NULL;
 	*events = 0;
+	if (sender_owner)
+	{
+		bool changed = false;
+		for (int i = 0; i < wp->n_safekeepers; i++)
+		{
+			uint32 wanted;
+			uint64 version;
+			int fd = NativeQuorumSenderSocket(i,&wanted,&version);
+			if (fd != nativeEventFD[i] || version != nativeEventVersion[i])
+				changed = true;
+			else if (nativeEventPos[i] >= 0)
+				ModifyWaitEvent(waitEvents,nativeEventPos[i],wanted,NULL);
+		}
+		if (changed)
+		{
+			/* Refresh fd identity only on reconnect. Reuse registrations on
+			 * ordinary appends; native socket events return to the owner pump. */
+			walprop_pg_free_event_set(wp);
+			walprop_pg_init_event_set(wp);
+			for (int i = 0; i < wp->n_safekeepers; i++)
+			{
+				Safekeeper *node = &wp->safekeeper[i];
+				uint32 sk_events, nwr_events;
+				if (node->state == SS_OFFLINE)
+					continue;
+				SafekeeperStateDesiredEvents(node,&sk_events,&nwr_events);
+				walprop_pg_add_safekeeper_event_set(node,sk_events);
+				if (nwr_events)
+					add_nwr_event_set(node,nwr_events);
+			}
+		}
+	}
 
 #if PG_MAJORVERSION_NUM >= 16
-	if (WalSndCtl != NULL)
+	if (WalSndCtl != NULL && (!native_owner || sender_owner))
 		ConditionVariablePrepareToSleep(&WalSndCtl->wal_flush_cv);
 
 	/*
@@ -1984,7 +2041,7 @@ walprop_pg_wait_event_set(WalProposer *wp, long timeout, Safekeeper **sk, uint32
 	 * Do that only when we're interested in new WAL: without sync-safekeepers
 	 * and if election already passed.
 	 */
-	if (!wp->config->syncSafekeepers && wp->availableLsn != InvalidXLogRecPtr && GetFlushRecPtr(NULL) > wp->availableLsn)
+	if ((!native_owner || sender_owner) && !wp->config->syncSafekeepers && wp->availableLsn != InvalidXLogRecPtr && GetFlushRecPtr(NULL) > wp->availableLsn)
 	{
 		ConditionVariableCancelSleep();
 		ResetLatch(MyLatch);
@@ -2002,10 +2059,12 @@ walprop_pg_wait_event_set(WalProposer *wp, long timeout, Safekeeper **sk, uint32
 	 * PG15-: We got woken up by a process triggering the WalSender * PG16+:
 	 * WalSndCtl->wal_flush_cv was triggered
 	 */
+	if (native_owner || native_preflight)
+		timeout = Min(timeout,10L);
 	rc = WaitEventSetWait(waitEvents, timeout,
 						  &event, 1, WAIT_EVENT_WAL_SENDER_MAIN);
 #if PG_MAJORVERSION_NUM >= 16
-	if (WalSndCtl != NULL)
+	if (WalSndCtl != NULL && (!native_owner || sender_owner))
 		late_cv_trigger = ConditionVariableCancelSleep();
 #endif
 
@@ -2019,6 +2078,14 @@ walprop_pg_wait_event_set(WalProposer *wp, long timeout, Safekeeper **sk, uint32
 	{
 		ConfigReloadPending = false;
 		ProcessConfigFile(PGC_SIGHUP);
+	}
+	if (rc == 0 && native_preflight)
+	{
+		/* Authentication readiness must advance even if catalog/bootstrap
+		 * work has gone idle. The legacy writer still owns data until ready. */
+		(void) NativeQuorumPump(wp);
+		*events = WL_LATCH_SET;
+		return 1;
 	}
 
 	/*
@@ -2039,6 +2106,11 @@ walprop_pg_wait_event_set(WalProposer *wp, long timeout, Safekeeper **sk, uint32
 	 */
 	if (rc == 1 && (event.events & WL_SOCKET_MASK))
 	{
+		if (sender_owner && event.user_data == NULL)
+		{
+			*events = WL_LATCH_SET;
+			return 1;
+		}
 		*sk = (Safekeeper *) event.user_data;
 		*events = event.events;
 		return 1;
@@ -2133,6 +2205,16 @@ CombineHotStanbyFeedbacks(HotStandbyFeedback *hs, WalProposer *wp)
  *
  * None of that is functional in sync-safekeepers.
  */
+void
+WalProposerPublishNativeQuorum(WalProposer *wp, XLogRecPtr quorum)
+{
+	if (wp->config->syncSafekeepers || quorum <= standby_flush_lsn)
+		return;
+	standby_flush_lsn = quorum;
+	ProcessStandbyReply(quorum,quorum,standby_apply_lsn,
+						walprop_pg_get_current_timestamp(wp),false);
+}
+
 static void
 walprop_pg_process_safekeeper_feedback(WalProposer *wp, Safekeeper *sk)
 {
@@ -2141,6 +2223,13 @@ walprop_pg_process_safekeeper_feedback(WalProposer *wp, Safekeeper *sk)
 
 	if (wp->config->syncSafekeepers)
 		return;
+	if (native_reconnect_pending[sk->index])
+	{
+		/* Count only the first valid append feedback, not a sent Elected
+		 * message which the peer could subsequently reject. */
+		native_reconnect_pending[sk->index] = false;
+		NativeQuorumControlReconnected();
+	}
 
 
 	/* handle fresh ps_feedback */
@@ -2294,6 +2383,8 @@ walprop_pg_update_safekeeper_status_for_metrics(WalProposer *wp, uint32 sk_index
 	SpinLockAcquire(&shmem->mutex);
 	shmem->safekeeper_status[sk_index] = status;
 	SpinLockRelease(&shmem->mutex);
+	native_reconnect_pending[sk_index] = status == 1 &&
+		NativeQuorumControlOnly(&wp->safekeeper[sk_index]);
 	BoundedCommitGuardSetQuorumAvailable(BoundedCommitHasLiveQuorum(wp));
 }
 /* END_HADRON */
@@ -2332,4 +2423,5 @@ static const walproposer_api walprop_pg = {
 	.log_internal = walprop_pg_log_internal,
 	.reset_safekeeper_statuses_for_metrics = walprop_pg_reset_safekeeper_statuses_for_metrics,
 	.update_safekeeper_status_for_metrics = walprop_pg_update_safekeeper_status_for_metrics,
+	.control_only_append = NativeQuorumControlOnly,
 };

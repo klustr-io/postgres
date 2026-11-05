@@ -36,6 +36,8 @@ use crate::timeline::{TimelineError, WalResidentTimeline};
 
 const DEFAULT_FEEDBACK_CAPACITY: usize = 8;
 
+mod owned_ingest;
+
 /// Registry of WalReceivers (compute connections). Timeline holds it (wrapped
 /// in Arc).
 pub struct WalReceivers {
@@ -271,6 +273,26 @@ impl SafekeeperPostgresHandler {
                     .pageserver_feedback_tx
                     .subscribe();
             *tli = Some(timeline.wal_residence_guard().await?);
+
+            if self.conf.wal_io_engine.uses_owned_ingest() {
+                // The owner drives disk operations to completion itself. Do not
+                // wrap it in a select that can cancel a state transition.
+                drop(network_reader);
+                drop((msg_tx, msg_rx, reply_tx, reply_rx));
+                let result = owned_ingest::run(
+                    timeline,
+                    next_msg,
+                    &mut pgb_reader,
+                    pgb,
+                    pageserver_feedback_rx,
+                    proto_version,
+                    self.conn_id,
+                    self.conf.wal_batch_delay_us,
+                )
+                .await;
+                pgb.unsplit(pgb_reader)?;
+                return result;
+            }
 
             let timeline_cancel = timeline.cancel.clone();
             tokio::select! {

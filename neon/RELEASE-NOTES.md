@@ -1,3 +1,30 @@
+# Native WAL ingestion and quorum completion - experimental changeset
+
+Adds an opt-in replacement WAL data path with one elected sender, bounded
+authenticated COPY pipelines, contiguous-frame batching, isolated storage-ingest
+workers and selective durable-prefix completion notifications. Application SQL
+and connection protocols remain unchanged. Local fsync, complete-record quorum
+proof, term/generation fencing and joint-membership rules remain required.
+The unsuccessful eventfd latch experiment is excluded from this changeset.
+
+Controlled RAM-only ABBA comparisons measured 47,402 versus 21,510 TPS at
+32 clients (2.204x), and 58,767 versus 25,718 TPS at 64 clients (2.285x).
+Each whole system shared eight CPUs, including clients and storage services.
+A separate native PostgreSQL control averaged 118,622 TPS at 64 clients;
+the candidate reaches 49.5% of that local-durability reference. These results
+do not measure S3, persistent-media IOPS, multi-zone latency or production capacity.
+Document-storage and WAL gains were measured separately and are not multiplied.
+
+Focused checks cover authenticated pipelined appends, conflicting retries,
+stale-term rejection, one-node availability, quorum blocking, cancellation,
+control reconnects, idle-tail drain and acknowledged rows after process restarts.
+The new path remains disabled by default and requires explicit experimental
+compute and safekeeper configuration. Published development images package the
+implementation without promoting it to a production-qualified default.
+See the [architecture notes](docs/neon-production/architecture/RefactorPlan.md#durable-quorum-execution-refactor),
+[recorded results](tests/neon/performance/quorum-io-results.json) and
+[updated performance article](../blog.md).
+
 # Native DOCB documents - experimental source changeset
 
 Adds the opt-in `docb` base type through a packaged extension, with native immutable

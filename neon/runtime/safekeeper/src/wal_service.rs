@@ -32,6 +32,48 @@ pub async fn task_main(
     tls_config: Option<Arc<rustls::ServerConfig>>,
     global_timelines: Arc<GlobalTimelines>,
 ) -> anyhow::Result<()> {
+    task_main_inner(
+        conf,
+        pg_listener,
+        allowed_auth_scope,
+        tls_config,
+        global_timelines,
+        false,
+    )
+    .await
+}
+
+pub async fn native_task_main(
+    conf: Arc<SafeKeeperConf>,
+    pg_listener: std::net::TcpListener,
+    allowed_auth_scope: Scope,
+    tls_config: Option<Arc<rustls::ServerConfig>>,
+    global_timelines: Arc<GlobalTimelines>,
+) -> anyhow::Result<()> {
+    task_main_inner(
+        conf,
+        pg_listener,
+        allowed_auth_scope,
+        tls_config,
+        global_timelines,
+        true,
+    )
+    .await
+}
+
+enum AcceptedSocket {
+    Control(TcpStream),
+    Native(std::net::TcpStream),
+}
+
+async fn task_main_inner(
+    conf: Arc<SafeKeeperConf>,
+    pg_listener: std::net::TcpListener,
+    allowed_auth_scope: Scope,
+    tls_config: Option<Arc<rustls::ServerConfig>>,
+    global_timelines: Arc<GlobalTimelines>,
+    native_only: bool,
+) -> anyhow::Result<()> {
     // Tokio's from_std won't do this for us, per its comment.
     pg_listener.set_nonblocking(true)?;
 
@@ -45,14 +87,35 @@ pub async fn task_main(
         let conn_id = issue_connection_id(&mut connection_count);
         let global_timelines = global_timelines.clone();
         let tls_config = tls_config.clone();
-        tokio::spawn(
+        // Re-register native sockets on their own runtime's reactor. There is
+        // no cross-runtime handoff for each read/write or filesystem batch.
+        let socket = if native_only {
+            AcceptedSocket::Native(socket.into_std()?)
+        } else {
+            AcceptedSocket::Control(socket)
+        };
+        let task =
             async move {
-                if let Err(err) = handle_socket(socket, conf, conn_id, allowed_auth_scope, tls_config, global_timelines).await {
+                let socket=match socket {
+                    AcceptedSocket::Control(socket)=>socket,
+                    AcceptedSocket::Native(socket)=>match TcpStream::from_std(socket) {
+                        Ok(socket)=>socket,
+                        Err(error)=>{ error!("native socket registration failed: {error}"); return; }
+                    },
+                };
+                let operation=handle_socket(socket, conf, conn_id, allowed_auth_scope, tls_config, global_timelines,native_only);
+                let result=if native_only { crate::wal_storage::native_ingest_scope(operation).await }
+                    else { operation.await };
+                if let Err(err) = result {
                     error!("connection handler exited: {}", err);
                 }
             }
-            .instrument(info_span!("", cid = %conn_id, ttid = field::Empty, application_name = field::Empty, shard = field::Empty)),
-        );
+            .instrument(info_span!("", cid = %conn_id, native_only, ttid = field::Empty, application_name = field::Empty, shard = field::Empty));
+        if native_only {
+            crate::NATIVE_INGEST_RUNTIME.spawn(task);
+        } else {
+            tokio::spawn(task);
+        }
     }
 }
 
@@ -65,6 +128,7 @@ async fn handle_socket(
     allowed_auth_scope: Scope,
     tls_config: Option<Arc<rustls::ServerConfig>>,
     global_timelines: Arc<GlobalTimelines>,
+    native_only: bool,
 ) -> Result<(), QueryError> {
     socket.set_nodelay(true)?;
     let socket_fd = socket.as_raw_fd();
@@ -113,6 +177,7 @@ async fn handle_socket(
         auth_pair,
         global_timelines,
     );
+    conn_handler.native_only = native_only;
     let pgbackend =
         PostgresBackend::new_from_io(socket_fd, socket, peer_addr, auth_type, tls_config)?;
     // libpq protocol between safekeeper and walproposer / pageserver

@@ -67,7 +67,13 @@ impl Env {
         pstate.tenant_id = ttid.tenant_id;
         pstate.timeline_id = ttid.timeline_id;
 
-        let wal = wal_storage::PhysicalStorage::new(&ttid, &timeline_dir, &pstate, conf.no_sync)?;
+        let wal = wal_storage::PhysicalStorage::new(
+            &ttid,
+            &timeline_dir,
+            &pstate,
+            conf.no_sync,
+            conf.wal_io_engine,
+        )?;
         let ctrl =
             control_file::FileStorage::create_new(&timeline_dir, pstate, conf.no_sync).await?;
         let state = TimelineState::new(ctrl);

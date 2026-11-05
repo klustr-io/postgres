@@ -41,6 +41,7 @@ pub struct SafekeeperPostgresHandler {
     /// Unique connection id is logged in spans for observability.
     pub conn_id: ConnectionId,
     pub global_timelines: Arc<GlobalTimelines>,
+    pub(crate) native_only: bool,
     /// Auth scope allowed on the connections and public key used to check auth tokens. None if auth is not configured.
     auth: Option<(Scope, Arc<JwtAuth>)>,
     claims: Option<Claims>,
@@ -49,6 +50,7 @@ pub struct SafekeeperPostgresHandler {
 
 /// Parsed Postgres command.
 enum SafekeeperPostgresCommand {
+    NativeWalAppend,
     StartWalPush {
         proto_version: u32,
         // Eventually timelines will be always created explicitly by storcon.
@@ -65,7 +67,9 @@ enum SafekeeperPostgresCommand {
 }
 
 fn parse_cmd(cmd: &str) -> anyhow::Result<SafekeeperPostgresCommand> {
-    if cmd.starts_with("START_WAL_PUSH") {
+    if cmd.trim() == "START_WAL_APPEND" {
+        Ok(SafekeeperPostgresCommand::NativeWalAppend)
+    } else if cmd.starts_with("START_WAL_PUSH") {
         // Allow additional options in postgres START_REPLICATION style like
         //   START_WAL_PUSH (proto_version '3', allow_timeline_creation 'false').
         // Parsing here is very naive and breaks in case of commas or
@@ -134,6 +138,7 @@ fn parse_cmd(cmd: &str) -> anyhow::Result<SafekeeperPostgresCommand> {
 
 fn cmd_to_string(cmd: &SafekeeperPostgresCommand) -> &str {
     match cmd {
+        SafekeeperPostgresCommand::NativeWalAppend => "START_WAL_APPEND",
         SafekeeperPostgresCommand::StartWalPush { .. } => "START_WAL_PUSH",
         SafekeeperPostgresCommand::StartReplication { .. } => "START_REPLICATION",
         SafekeeperPostgresCommand::TimelineStatus => "TIMELINE_STATUS",
@@ -309,6 +314,11 @@ impl<IO: AsyncRead + AsyncWrite + Unpin + Send> postgres_backend::Handler<IO>
         query_string: &str,
     ) -> impl Future<Output = Result<(), QueryError>> {
         Box::pin(async move {
+            if self.native_only && query_string.trim() != "START_WAL_APPEND" {
+                return Err(QueryError::Other(anyhow::anyhow!(
+                    "native WAL listener accepts only START_WAL_APPEND"
+                )));
+            }
             if query_string
                 .to_ascii_lowercase()
                 .starts_with("set datestyle to ")
@@ -331,6 +341,9 @@ impl<IO: AsyncRead + AsyncWrite + Unpin + Send> postgres_backend::Handler<IO>
             self.ttid = TenantTimelineId::new(tenant_id, timeline_id);
 
             match cmd {
+                SafekeeperPostgresCommand::NativeWalAppend => {
+                    self.handle_native_wal_append(pgb).await
+                }
                 SafekeeperPostgresCommand::StartWalPush {
                     proto_version,
                     allow_timeline_creation,
@@ -352,6 +365,9 @@ impl<IO: AsyncRead + AsyncWrite + Unpin + Send> postgres_backend::Handler<IO>
 }
 
 impl SafekeeperPostgresHandler {
+    pub(crate) fn native_wal_authenticated(&self) -> bool {
+        self.auth.is_some() && self.claims.is_some()
+    }
     pub fn new(
         conf: Arc<SafeKeeperConf>,
         conn_id: u32,
@@ -372,6 +388,7 @@ impl SafekeeperPostgresHandler {
             auth,
             io_metrics,
             global_timelines,
+            native_only: false,
         }
     }
 
@@ -508,6 +525,15 @@ impl SafekeeperPostgresHandler {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn native_append_command_is_exact() {
+        assert!(matches!(
+            super::parse_cmd("START_WAL_APPEND").unwrap(),
+            super::SafekeeperPostgresCommand::NativeWalAppend
+        ));
+        assert!(super::parse_cmd("START_WAL_APPEND extra").is_err());
+        assert!(super::parse_cmd("START_WAL_APPEND; SELECT 1").is_err());
+    }
     use super::SafekeeperPostgresCommand;
 
     /// Test parsing of START_WAL_PUSH command

@@ -70,6 +70,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=shared \
        PG_CONFIG=/opt/postgres/v18/bin/pg_config NEON_CARGO_ARTIFACT_TARGET_DIR=/source/target/release \
        CARGO_BUILD_FLAGS=--locked CARGO_PROFILE=--release -j${BUILD_JOBS} all install; done \
     && cargo test --locked --release -p postgres-protocol2 authentication::sasl \
+    && cargo test --locked --release -p safekeeper --lib native_ \
     && cargo metadata --locked --format-version=1 > /out/qualification/dependency-resolution.json
 RUN rm -rf /out/qualification/runtime-tests \
     && strip --strip-unneeded /out/bin/* /opt/postgres/v18/bin/postgres /opt/postgres/v18/lib/neon*.so /opt/postgres/v18/lib/klustr_oauth.so \

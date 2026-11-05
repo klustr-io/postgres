@@ -25,6 +25,7 @@
 #include "utils/pg_lsn.h"
 #include "utils/wait_event.h"
 #include "bounded_commit_guard.h"
+#include "native_quorum.h"
 
 typedef struct BoundedCommitShared
 {
@@ -134,6 +135,7 @@ commit_guard(XLogRecPtr lsn, bool commit)
             ConditionVariablePrepareToSleep(&shared->changed);
         }
         quorum = pg_atomic_read_u64(&shared->quorum_lsn);
+        quorum = Max(quorum, NativeQuorumDurablePrefix());
         frontier = pg_atomic_read_u64(&shared->verified_prefix_at_us);
         now = monotonic_us();
         durable = quorum != 0 && lsn <= quorum;
@@ -295,7 +297,7 @@ bounded_commit_guard_main(Datum arg)
 Datum
 bounded_commit_guard_status(PG_FUNCTION_ARGS)
 {
-    char buffer[768];
+    char buffer[1024];
     uint64 frontier, now, quorum, pending;
     if (!superuser())
         ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE), errmsg("superuser required")));
@@ -308,7 +310,8 @@ bounded_commit_guard_status(PG_FUNCTION_ARGS)
     snprintf(buffer, sizeof(buffer),
         "{\"enabled\":%s,\"best_effort\":%s,\"max_age_ms\":%d,\"max_wal_bytes\":%llu,\"age_ms\":%lld,"
         "\"quorum_lsn\":\"%X/%X\",\"pending_prefix_lsn\":\"%X/%X\","
-        "\"fast_acks\":%llu,\"waits\":%llu,\"wait_us\":%llu,\"draining\":%s,\"quorum_available\":%s}",
+        "\"fast_acks\":%llu,\"waits\":%llu,\"wait_us\":%llu,\"draining\":%s,\"quorum_available\":%s,"
+        "\"native_provider_commits\":%llu,\"native_quorum_lsn\":\"%X/%X\",\"native_inflight_highwater\":%u,\"native_copy_submissions\":%llu,\"native_cohort_delays\":%llu,\"native_control_reconnects\":%llu,\"native_pipelined_submissions\":%llu}",
         enabled ? "true" : "false", best_effort ? "true" : "false", max_age_ms, (unsigned long long) max_lag_mb * 1024 * 1024,
         frontier && now >= frontier ? (long long) ((now - frontier) / 1000) : -1LL,
         LSN_FORMAT_ARGS(quorum),
@@ -317,7 +320,12 @@ bounded_commit_guard_status(PG_FUNCTION_ARGS)
         (unsigned long long) pg_atomic_read_u64(&shared->waits),
         (unsigned long long) pg_atomic_read_u64(&shared->wait_us),
         pg_atomic_read_u32(&shared->draining) ? "true" : "false",
-        pg_atomic_read_u32(&shared->quorum_available) ? "true" : "false");
+        pg_atomic_read_u32(&shared->quorum_available) ? "true" : "false",
+        (unsigned long long) NativeQuorumProviderCommits(),
+        LSN_FORMAT_ARGS(NativeQuorumDurablePrefix()), NativeQuorumInflightHighwater(),
+        (unsigned long long)NativeQuorumCopySubmissions(), (unsigned long long)NativeQuorumCohortDelays(),
+        (unsigned long long)NativeQuorumControlReconnects(),
+        (unsigned long long)NativeQuorumPipelinedSubmissions());
     PG_RETURN_TEXT_P(cstring_to_text(buffer));
 }
 

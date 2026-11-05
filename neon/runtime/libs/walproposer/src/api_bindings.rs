@@ -445,6 +445,7 @@ pub(crate) fn create_api() -> walproposer_api {
         /* BEGIN_HADRON */
         reset_safekeeper_statuses_for_metrics: Some(reset_safekeeper_statuses_for_metrics),
         update_safekeeper_status_for_metrics: Some(update_safekeeper_status_for_metrics),
+        control_only_append: None,
         /* END_HADRON */
     }
 }
