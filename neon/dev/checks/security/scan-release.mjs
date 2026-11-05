@@ -22,6 +22,7 @@ export function scanRelease(archives, output) {
     assert(/^[a-z-]+$/.test(role), 'Invalid image role');
     const file = fs.realpathSync(archive.file);
     const result = spawnSync('docker', ['run', '--rm', '--cpus=2', '--memory=3g',
+      '--user', `${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`,
       '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges',
       '--tmpfs=/tmp:rw,size=1g',
       '--mount', `type=bind,source=${path.dirname(file)},target=/input,readonly`,
