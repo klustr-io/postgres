@@ -1,7 +1,7 @@
 /* Focused proof-policy checks. Link with function/data section GC: the test
  * includes the real reducer and discards the PostgreSQL/transport entry points.
  * No running database, network, volume, or copied production algorithm. */
-#include "../../../runtime/pgxn/neon/native_quorum.c"
+#include "native_quorum.c"
 
 int
 main(void)

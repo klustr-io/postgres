@@ -42,6 +42,12 @@ RUN if [ -d /out/qualification/native ]; then mv /out/qualification/native /tmp/
     && if [ -d /tmp/native-provenance ]; then mv /tmp/native-provenance /out/qualification/native; fi
 COPY neon/runtime/ /source/
 WORKDIR /source
+COPY neon/tests/neon/compute/native_quorum_membership.c /tmp/native_quorum_membership.c
+RUN cc -O2 -ffunction-sections -fdata-sections -Wl,--gc-sections \
+       -I/opt/postgres/v18/include/server -I/opt/postgres/v18/include -I/source/pgxn/neon \
+       /tmp/native_quorum_membership.c -o /tmp/native-quorum-membership \
+    && /tmp/native-quorum-membership \
+    && rm /tmp/native-quorum-membership /tmp/native_quorum_membership.c
 ARG SOURCE_REVISION=uncommitted
 ARG RUST_CACHE_NAMESPACE=neon-monorepo
 ENV GIT_VERSION=${SOURCE_REVISION} CARGO_BUILD_JOBS=${BUILD_JOBS}
