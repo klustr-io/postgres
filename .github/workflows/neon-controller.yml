@@ -57,11 +57,15 @@ jobs:
             --file neon/packaging/docker/neon/runtime/Dockerfile.tenant-controller \
             --tag "$repository:controller-sha-$GITHUB_SHA" --metadata-file controller-image.json \
             --output type=oci,dest=build/controller/controller.oci.tar .
+          # Preserve the attested image and provide the Docker/OCI hybrid archive
+          # supported by Trivy's tar input reader. Publication uses this loaded image.
+          docker load --input build/controller/controller.oci.tar
+          docker save "$repository:controller-sha-$GITHUB_SHA" --output build/controller/controller-scan.oci.tar
       - name: Scan controller before registry authentication
         run: |
           node --input-type=module - <<'NODE'
           import {scanRelease} from './neon/dev/checks/security/scan-release.mjs';
-          scanRelease({'tenant-controller':{file:'build/controller/controller.oci.tar'}},'build/controller/security');
+          scanRelease({'tenant-controller':{file:'build/controller/controller-scan.oci.tar'}},'build/controller/security');
           NODE
       - name: Retain security findings
         if: always()
@@ -80,7 +84,6 @@ jobs:
         run: |
           set -euo pipefail
           repository="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/neon-tenant-controller"
-          docker load --input build/controller/controller.oci.tar
           docker push "$repository:controller-sha-$GITHUB_SHA"
           digest=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync("controller-image.json"))["containerimage.digest"])')
           published=$(docker buildx imagetools inspect "$repository:controller-sha-$GITHUB_SHA" --format '{{.Manifest.Digest}}')
