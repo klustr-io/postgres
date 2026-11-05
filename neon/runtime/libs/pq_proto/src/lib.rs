@@ -321,9 +321,7 @@ impl FeMessage {
             b'c' => Ok(Some(FeMessage::CopyDone)),
             b'f' => Ok(Some(FeMessage::CopyFail)),
             b'p' => Ok(Some(FeMessage::PasswordMessage(msg))),
-            tag => Err(ProtocolError::Protocol(format!(
-                "unknown message tag: {tag},'{msg:?}'"
-            ))),
+            tag => Err(ProtocolError::Protocol(format!("unknown message tag: {tag}"))),
         }
     }
 }
@@ -463,6 +461,9 @@ impl FeParseMessage {
 
 impl FeDescribeMessage {
     fn parse(mut buf: Bytes) -> Result<FeMessage, ProtocolError> {
+        if buf.remaining() < 2 {
+            return Err(ProtocolError::BadMessage("Describe kind/name missing".into()));
+        }
         let kind = buf.get_u8();
         let _pstmt_name = read_cstr(&mut buf)?;
 
@@ -474,6 +475,36 @@ impl FeDescribeMessage {
         }
 
         Ok(FeMessage::Describe(FeDescribeMessage { kind }))
+    }
+}
+
+#[cfg(test)]
+mod frontend_security_tests {
+    use super::*;
+
+    #[test]
+    fn empty_describe_is_rejected_without_panic() {
+        let mut frame = BytesMut::from(&b"D\0\0\0\x04"[..]);
+        assert!(FeMessage::parse(&mut frame).is_err());
+    }
+
+    #[test]
+    fn empty_close_is_rejected_without_panic() {
+        let mut frame = BytesMut::from(&b"C\0\0\0\x04"[..]);
+        assert!(FeMessage::parse(&mut frame).is_err());
+    }
+
+    #[test]
+    fn short_frontend_frames_do_not_panic() {
+        for tag in 0..=255u8 {
+            for size in 0..16u32 {
+                let mut frame = BytesMut::from(&[tag][..]);
+                frame.extend_from_slice(&(size + 4).to_be_bytes());
+                frame.extend_from_slice(&vec![0; size as usize]);
+                assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
+                    FeMessage::parse(&mut frame))).is_ok(), "tag={tag} size={size}");
+            }
+        }
     }
 }
 
@@ -520,6 +551,9 @@ impl FeBindMessage {
 
 impl FeCloseMessage {
     fn parse(mut buf: Bytes) -> Result<FeMessage, ProtocolError> {
+        if buf.remaining() < 2 {
+            return Err(ProtocolError::BadMessage("Close kind/name missing".into()));
+        }
         let _kind = buf.get_u8();
         let _pstmt_or_portal_name = read_cstr(&mut buf)?;
 

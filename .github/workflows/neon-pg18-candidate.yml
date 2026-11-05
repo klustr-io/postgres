@@ -5,6 +5,7 @@ on:
   push:
     branches: [REL_18_STABLE_neon, main, 'release/**']
     tags: ['neon-v18.*']
+    paths-ignore: ['**/*.md']
   workflow_dispatch:
     inputs:
       publish:
@@ -32,6 +33,7 @@ jobs:
         run: |
           node --check neon/build.mjs
           node --check neon/publish.mjs
+          node --check neon/dev/checks/security/scan-release.mjs
           node --check neon/controller/tenant-compute/src/infrastructure/provisioning/TenantProvisioning.mjs
           node --check neon/controller/tenant-compute/src/infrastructure/compose/ComposeRuntime.mjs
           node --check neon/controller/tenant-compute/src/application/database/Databases.mjs
@@ -161,6 +163,7 @@ jobs:
             build/published-release/release-manifest.json
             build/published-release/SHA256SUMS
             build/published-release/release-notes.md
+            build/published-release/security/*.json
           if-no-files-found: warn
       - name: Clear runner registry login
         if: always()

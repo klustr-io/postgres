@@ -1,3 +1,21 @@
+# Security hardening — unreleased
+
+Bounds unauthenticated storage-protocol frames, rejects truncated Describe/Close
+messages, removes credential payloads from authentication errors, and gives native
+WAL feedback and cleanup a write deadline. Both PostgreSQL clients validate row
+field counts. The checked-in normal client retains Neon replication APIs on
+upstream 0.7.18.
+
+Updates the AWS SDK, TLS, JWT, RSA and database adapter dependencies and pins Rust
+1.99.1. S3-compatible endpoints retain the HTTP/1.1 streaming transport option.
+The packaged psql omits Readline line editing/history to remove its ncurses dependency.
+Both OCI publication workflows scan built archives before pushing them.
+
+The source dependency scan reports no critical/high findings. Two medium findings
+remain. The [security review](docs/neon-production/architecture/SecurityReview.md)
+records their exposure, verification scope and limitations. Existing published images do not contain this
+changeset; a fresh OCI build and image scan are still required.
+
 # Native WAL ingestion and quorum completion - experimental changeset
 
 Adds an opt-in replacement WAL data path with one elected sender, bounded

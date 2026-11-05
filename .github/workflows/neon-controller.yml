@@ -12,6 +12,7 @@ on:
       - neon/packaging/kubernetes/fleet-stack.json
       - neon/packaging/deploy/render.mjs
       - neon/dev/quality/**
+      - neon/dev/checks/security/**
       - neon/tests/neon/unit/**
       - .github/actions/neon-controller-check/**
       - .github/workflows/neon-controller.yml
@@ -37,10 +38,39 @@ jobs:
           node-version: '24.19.0'
           package-manager-cache: false
       - uses: ./.github/actions/neon-controller-check
+      - uses: docker/setup-docker-action@7ec28a010822b4626af4874f9448a4b05ac6f3e5 # v5.6.0
+        with:
+          version: 'v29.7.2'
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           version: v0.36.1
           driver-opts: image=moby/buildkit@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+      - name: Build controller archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/controller
+          repository="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/neon-tenant-controller"
+          docker buildx build --platform linux/amd64 --provenance=true --sbom=true \
+            --build-arg "SOURCE_REVISION=$GITHUB_SHA" \
+            --file neon/packaging/docker/neon/runtime/Dockerfile.tenant-controller \
+            --tag "$repository:controller-sha-$GITHUB_SHA" --metadata-file controller-image.json \
+            --output type=oci,dest=build/controller/controller.oci.tar .
+      - name: Scan controller before registry authentication
+        run: |
+          node --input-type=module - <<'NODE'
+          import {scanRelease} from './neon/dev/checks/security/scan-release.mjs';
+          scanRelease({'tenant-controller':{file:'build/controller/controller.oci.tar'}},'build/controller/security');
+          NODE
+      - name: Retain security findings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: neon-controller-security-${{ github.sha }}
+          path: build/controller/security/*.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Authenticate to GHCR
         env:
           GHCR_TOKEN: ${{ github.token }}
@@ -50,11 +80,11 @@ jobs:
         run: |
           set -euo pipefail
           repository="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/neon-tenant-controller"
-          docker buildx build --platform linux/amd64 --provenance=true --sbom=true \
-            --build-arg "SOURCE_REVISION=$GITHUB_SHA" \
-            --file neon/packaging/docker/neon/runtime/Dockerfile.tenant-controller \
-            --tag "$repository:controller-sha-$GITHUB_SHA" --metadata-file controller-image.json --push .
+          docker load --input build/controller/controller.oci.tar
+          docker push "$repository:controller-sha-$GITHUB_SHA"
           digest=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync("controller-image.json"))["containerimage.digest"])')
+          published=$(docker buildx imagetools inspect "$repository:controller-sha-$GITHUB_SHA" --format '{{.Manifest.Digest}}')
+          test "$published" = "$digest" || { echo 'Published controller differs from the scanned archive'; exit 1; }
           printf 'Controller image: `%s@%s`\nSource commit: `%s`\n' "$repository" "$digest" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload image publication receipt
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

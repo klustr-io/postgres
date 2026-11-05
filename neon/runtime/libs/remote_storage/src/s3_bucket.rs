@@ -94,10 +94,7 @@ impl S3Bucket {
         // AWS SDK requires us to specify how the RetryConfig should sleep when it wants to back off
         let sleep_impl: Arc<dyn AsyncSleep> = Arc::new(TokioSleep::new());
 
-        let sdk_config_loader: aws_config::ConfigLoader = aws_config::defaults(
-            #[allow(deprecated)] /* TODO: https://github.com/neondatabase/neon/issues/7665 */
-            BehaviorVersion::v2023_11_09(),
-        )
+        let sdk_config_loader: aws_config::ConfigLoader = aws_config::defaults(BehaviorVersion::latest())
         .region(region_opt)
         .identity_cache(IdentityCache::lazy().build())
         .credentials_provider(credentials_provider)
@@ -1218,16 +1215,24 @@ fn configure_s3_transport(
     custom_endpoint: bool,
     protocol: Option<&str>,
 ) -> anyhow::Result<aws_sdk_s3::config::Builder> {
+    // Preserve identity-body uploads for S3-compatible services. New SDKs add
+    // optional aws-chunked checksum envelopes that older endpoints cannot read.
+    let builder = if custom_endpoint {
+        builder.request_checksum_calculation(aws_sdk_s3::config::RequestChecksumCalculation::WhenRequired)
+    } else {
+        builder
+    };
     if !s3_use_http1(custom_endpoint, protocol)? {
         return Ok(builder);
     }
-    // Same native trust roots and TLS >= 1.2 as the SDK default. HTTP is
-    // retained for explicit local development endpoints, as in the SDK.
-    let connector = hyper_rustls_014::HttpsConnectorBuilder::new()
-        .with_native_roots()
-        .https_or_http()
-        .enable_http1()
-        .build();
+    // Keep the HTTP/1.1 override on native trust roots and TLS >= 1.2 without
+    // retaining the legacy Rustls stack. Explicit local HTTP endpoints remain supported.
+    let tls = native_tls::TlsConnector::builder()
+        .min_protocol_version(Some(native_tls::Protocol::Tlsv12))
+        .build()?;
+    let mut http = hyper0::client::HttpConnector::new();
+    http.enforce_http(false);
+    let connector = hyper_tls::HttpsConnector::from((http, tokio_native_tls::TlsConnector::from(tls)));
     let client = aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder::new()
         .build(connector);
     tracing::info!("S3 transport: HTTP/1.1, native TLS trust roots");
@@ -1273,7 +1278,10 @@ mod s3_transport_regression_tests {
                     }
                     let header = String::from_utf8(header).unwrap();
                     assert!(header.lines().next().unwrap().ends_with(" HTTP/1.1"));
-                    assert!(header.to_ascii_lowercase().contains(&format!("content-length: {BYTES}\r\n")));
+                    let length = header.lines().filter_map(|line| line.split_once(':'))
+                        .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                        .map(|(_, value)| value.trim().parse::<usize>().unwrap());
+                    assert_eq!(length, Some(BYTES));
                     let mut count = 0;
                     let mut buffer = vec![0u8; 65536];
                     while count < BYTES {
@@ -1289,7 +1297,7 @@ mod s3_transport_regression_tests {
             for task in tasks { task.await.unwrap(); }
         });
         let builder = aws_sdk_s3::config::Builder::new()
-            .behavior_version(BehaviorVersion::v2023_11_09())
+            .behavior_version(BehaviorVersion::latest())
             .region(Region::new("us-east-1"))
             .credentials_provider(aws_sdk_s3::config::Credentials::new("test", "test", None, None, "test"))
             .endpoint_url(endpoint)

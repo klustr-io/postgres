@@ -335,7 +335,7 @@ impl Persistence {
             match conn
                 .build_transaction()
                 .serializable()
-                .run(|c| func(c))
+                .run(async |c| func(c).await)
                 .await
             {
                 Ok(r) => break Ok(r),

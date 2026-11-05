@@ -25,6 +25,8 @@ pageserver, safekeeper, storage-controller, storage-broker, proxy and tenant-con
 Library/package downloads are pinned build dependencies; application sources are
 in this checkout. GitHub builds and publication are described in the
 [root README](../README.md) and [release notes](RELEASE-NOTES.md).
+The [security review](docs/neon-production/architecture/SecurityReview.md) records
+source repairs, dependency findings, bounded stability checks and publication gates.
 
 Third-party extensions are compiled against the same PG18 headers from
 [`extensions.lock.json`](packaging/neon/extensions.lock.json): Anonymizer,

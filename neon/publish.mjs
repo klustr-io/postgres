@@ -4,6 +4,7 @@ import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
+import {scanRelease} from './dev/checks/security/scan-release.mjs';
 const arg=name=>process.argv.find(value=>value.startsWith(name+'='))?.slice(name.length+1);
 const read=file=>JSON.parse(fs.readFileSync(file,'utf8').replace(/^\uFEFF/,''));
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -44,6 +45,7 @@ for(const role of roles){
   manifest.images[role]={image:name+':'+version,immutable_tag:name+':sha-'+commit,archive:role+'.oci.tar',archive_sha256:build.images[role].archive_sha256};
 }
 if(process.argv.includes('--plan')){console.log(JSON.stringify({status:'ARCHIVES-VERIFIED',version,commit,clean_source:Object.keys(build.changed_inputs).length===0,roles},null,2));process.exit(0);}
+manifest.security_assurance=scanRelease(archives,path.join(output,'security'));
 assert.equal(process.env.GITHUB_ACTIONS,'true','Publication runs in GitHub Actions');
 assert.notEqual(process.env.GITHUB_EVENT_NAME,'pull_request','Pull requests never publish');
 assert.equal(build.base_commit,commit,'Artifact commit differs');assert.equal(Object.keys(build.changed_inputs).length,0,'Source must be committed');

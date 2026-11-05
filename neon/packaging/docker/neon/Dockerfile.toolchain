@@ -42,5 +42,6 @@ RUN groupadd --gid 10002 qualification && useradd --uid 10002 --gid 10002 --no-c
     && cp /native-src/libxml2-2.15.4/Copyright /out/licenses/native/libxml2-Copyright \
     && cp /native-src/libxslt-1.1.45/Copyright /out/licenses/native/libxslt-Copyright \
     && cp /native-src/curl-8.23.0/COPYING /out/licenses/native/curl-COPYING
-ENV POSTGRES_INSTALL_DIR=/opt/postgres RUSTUP_TOOLCHAIN=1.88.0
+RUN rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy,llvm-tools
+ENV POSTGRES_INSTALL_DIR=/opt/postgres RUSTUP_TOOLCHAIN=1.99.1
 LABEL io.klustr.toolchain="pg18-monorepo"

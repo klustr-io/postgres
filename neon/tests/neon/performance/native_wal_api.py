@@ -190,6 +190,12 @@ def verify_native_wal_api(sql, root):
             (item/'stat').exists() and (item/'stat').read_text().rsplit(')', 1)[1].split()[1] == str(parent) and
             b'walproposer' in (item/'cmdline').read_bytes().lower().replace(b' ', b'')]
     assert len(rows) == 1, 'Expected exactly one proposer belonging to this fixture'
+    stability = None
+    if os.environ.get('QUORUM_STABILITY_CHECK') == '1':
+        import sys
+        sys.path.insert(0, '/security-probe')
+        from native_wal_stability import verify_native_stream_stability
+        stability = verify_native_stream_stability(lambda node: NativeCopy(node, valid), heartbeat)
     proposer = int(rows[0])
     assert Path(f'/proc/{proposer}/stat').read_text().rsplit(')', 1)[1].split()[1] == str(parent)
     starts = {}
@@ -254,7 +260,7 @@ def verify_native_wal_api(sql, root):
             assert code==200 and lsn(answer['commit_lsn'])>=quorum
     finally:
         os.kill(proposer,signal.SIGCONT)
-    return {'status':'PASS','tenant_authorization':True,'duplicate_bytes_verified':True,
+    return {'status':'PASS','stability':stability,'tenant_authorization':True,'duplicate_bytes_verified':True,
         'mismatching_bytes_rejected':True,'term_and_generation_fenced':True,'gaps_rejected':True,
         'frame_limits_enforced':True,'new_wal_persisted_while_proposer_paused':True,
         'new_tail_retries_verified_and_conflicts_rejected':True,

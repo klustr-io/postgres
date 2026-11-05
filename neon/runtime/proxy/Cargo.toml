@@ -121,7 +121,7 @@ signature = "2"
 ecdsa = "0.16"
 p256 = { version = "0.13", features = ["jwk"] }
 ed25519-dalek = { version = "2", default-features = false, features = ["rand_core"] }
-rsa = "0.9"
+rsa = "0.9.10"
 
 workspace_hack.workspace = true
 

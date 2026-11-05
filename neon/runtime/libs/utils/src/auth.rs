@@ -287,4 +287,17 @@ MC4CAQAwBQYDK2VwBCIEID/Drmc1AA6U/znNRWpF3zEGegOATQxfkdWxitcOMsIH
 
         assert_eq!(decoded.claims, claims);
     }
+
+    #[test]
+    fn malformed_optional_expiration_is_rejected() {
+        let auth = JwtAuth::new(vec![
+            DecodingKey::from_ed_pem(TEST_PUB_KEY_ED25519.as_bytes()).unwrap(),
+        ]);
+        let pem = pem::parse(TEST_PRIV_KEY_ED25519).unwrap();
+        for exp in [serde_json::json!("expired"), serde_json::json!(false), serde_json::json!([])] {
+            let claims = serde_json::json!({"scope": "pageserverapi", "exp": exp});
+            let token = encode_from_key_file(&claims, &pem).unwrap();
+            assert!(auth.decode::<serde_json::Value>(&token).is_err());
+        }
+    }
 }

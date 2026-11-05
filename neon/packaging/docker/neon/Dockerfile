@@ -4,7 +4,7 @@ ARG RUNTIME_BASE=gcr.io/distroless/base-nossl-debian12:nonroot@sha256:be40c00dfa
 FROM ${TOOLCHAIN_IMAGE} AS engine
 USER root
 ARG BUILD_JOBS=8
-ENV POSTGRES_INSTALL_DIR=/opt/postgres RUSTUP_TOOLCHAIN=1.88.0
+ENV POSTGRES_INSTALL_DIR=/opt/postgres RUSTUP_TOOLCHAIN=1.99.1
 COPY COPYRIGHT HISTORY README.md aclocal.m4 configure configure.ac GNUmakefile.in meson.build meson_options.txt /pgsource/v18/
 COPY config/ /pgsource/v18/config/
 COPY src/ /pgsource/v18/src/
@@ -13,7 +13,7 @@ COPY doc/ /pgsource/v18/doc/
 RUN mkdir -p /pgbuild/monorepo /out/qualification \
     && cd /pgbuild/monorepo \
     && /pgsource/v18/configure --prefix=/opt/postgres/v18 --with-openssl --with-icu \
-       --with-lz4 --with-zstd --with-libxml --with-libxslt --with-libseccomp --with-libcurl --enable-tap-tests \
+       --with-lz4 --with-zstd --with-libxml --with-libxslt --with-libseccomp --with-libcurl --without-readline --enable-tap-tests \
     && make -j${BUILD_JOBS} world-bin && make install-world-bin
 RUN chown -R 10002:10002 /pgbuild/monorepo /pgsource/v18 /opt/postgres/v18
 USER 10002:10002
@@ -41,12 +41,11 @@ RUN if [ -d /out/qualification/native ]; then mv /out/qualification/native /tmp/
     && if [ -d /tmp/native-provenance ]; then mv /tmp/native-provenance /out/qualification/native; fi
 COPY neon/runtime/ /source/
 WORKDIR /source
-COPY neon/tests/neon/compute/native_quorum_membership.c /tmp/native_quorum_membership.c
-RUN cc -O2 -ffunction-sections -fdata-sections -Wl,--gc-sections \
-       -I/opt/postgres/v18/include/server -I/opt/postgres/v18/include -I/source/pgxn/neon \
-       /tmp/native_quorum_membership.c -o /tmp/native-quorum-membership \
-    && /tmp/native-quorum-membership \
-    && rm /tmp/native-quorum-membership /tmp/native_quorum_membership.c
+COPY neon/tests/neon/compute/native_quorum_membership.c /security-source/neon/tests/neon/compute/
+COPY neon/tests/neon/security/native_copy_lifecycle.c neon/tests/neon/security/run-native-sanitizers.sh /security-source/neon/tests/neon/security/
+RUN ln -s /source /security-source/neon/runtime \
+    && sh /security-source/neon/tests/neon/security/run-native-sanitizers.sh /security-source \
+    && rm -rf /security-source /tmp/native_quorum_membership /tmp/native_copy_lifecycle
 ARG SOURCE_REVISION=uncommitted
 ARG RUST_CACHE_NAMESPACE=neon-monorepo
 ENV GIT_VERSION=${SOURCE_REVISION} CARGO_BUILD_JOBS=${BUILD_JOBS}
@@ -75,6 +74,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=shared \
        PG_CONFIG=/opt/postgres/v18/bin/pg_config NEON_CARGO_ARTIFACT_TARGET_DIR=/source/target/release \
        CARGO_BUILD_FLAGS=--locked CARGO_PROFILE=--release -j${BUILD_JOBS} all install; done \
     && cargo test --locked --release -p postgres-protocol2 authentication::sasl \
+    && cargo test --locked --release -p tokio-postgres2 --lib security_tests \
+    && cargo test --locked --release -p tokio-postgres --lib row::test \
+    && cargo test --locked --release -p pq_proto --lib security_tests \
+    && cargo test --locked --release -p postgres_backend --lib security_tests \
+    && cargo test --locked --release -p utils --lib auth::tests \
     && cargo test --locked --release -p safekeeper --lib native_ \
     && cargo metadata --locked --format-version=1 > /out/qualification/dependency-resolution.json
 RUN rm -rf /out/qualification/runtime-tests \

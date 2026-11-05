@@ -41,6 +41,7 @@ const result = spawnSync('docker', ['run', '--rm', '--init', '--name', name, '--
   '--env', `QUORUM_STORAGE_BATCH_DELAY_US=${process.env.NEON_QUORUM_STORAGE_BATCH_DELAY_US || '0'}`,
   '--env', `QUORUM_ORDERED_WAIT_CHECK=${process.env.NEON_QUORUM_ORDERED_WAIT_CHECK || '0'}`,
   '--env', `QUORUM_NATIVE_WAL_API_CHECK=${process.env.NEON_NATIVE_WAL_API_CHECK || '0'}`,
+  '--env', `QUORUM_STABILITY_CHECK=${process.env.NEON_QUORUM_STABILITY_CHECK || '0'}`,
   '--env', `QUORUM_NATIVE_PROVIDER=${process.env.NEON_QUORUM_NATIVE_PROVIDER || '0'}`,
   '--env', `QUORUM_NATIVE_WINDOW=${process.env.NEON_QUORUM_NATIVE_WINDOW || '1'}`,
   '--env', `QUORUM_NATIVE_TRANSPORT=${process.env.NEON_QUORUM_NATIVE_TRANSPORT || 'http'}`,
@@ -76,6 +77,8 @@ const result = spawnSync('docker', ['run', '--rm', '--init', '--name', name, '--
     ? ['--tmpfs','/opt/fixture-bin:rw,nosuid,nodev,exec,size=1m,uid=10002,gid=10002,mode=0700'] : []),
   ...(group === 'ordered-wait-ab' ? ['--tmpfs', '/opt/pgcomparison:rw,nosuid,nodev,exec,size=192m,uid=10002,gid=10002,mode=0700'] : []),
   '--mount', `type=bind,source=${probe},target=/probe,readonly`,
+  ...(process.env.NEON_QUORUM_STABILITY_CHECK === '1'
+    ? ['--mount', `type=bind,source=${path.resolve(probe,'../security')},target=/security-probe,readonly`] : []),
   ...(profile || kernelProfile ? ['--mount', `type=bind,source=${output},target=/profile-output`] : []),
   ...(isDocb ? ['--mount', `type=bind,source=${docbProbe},target=/docb-probe,readonly`] : []),
   '--entrypoint', '/bin/sh', image, '-c', command],

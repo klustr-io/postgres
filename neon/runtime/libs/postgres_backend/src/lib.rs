@@ -26,6 +26,9 @@ use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 
+// Internal JWTs are small. A wire length is untrusted until authentication.
+const MAX_AUTH_PAYLOAD_BYTES: usize = 64 * 1024;
+
 /// An error, occurred during query processing:
 /// either during the connection ([`ConnectionError`]) or before/after it.
 #[derive(thiserror::Error, Debug)]
@@ -196,6 +199,87 @@ pub enum AuthType {
     NeonJWT,
 }
 
+#[cfg(test)]
+mod authentication_security_tests {
+    use super::*;
+    use tokio::io::AsyncWriteExt;
+    use std::time::Duration;
+
+    struct Validator { calls: usize }
+    impl<IO> Handler<IO> for Validator {
+        async fn process_query(&mut self, _: &mut PostgresBackend<IO>, _: &str) -> Result<(), QueryError> {
+            unreachable!()
+        }
+        fn check_auth_jwt(&mut self, _: &mut PostgresBackend<IO>, _: &[u8]) -> Result<(), QueryError> {
+            self.calls += 1;
+            Err(QueryError::Unauthorized("rejected test token".into()))
+        }
+    }
+
+    fn connection(io: tokio::io::DuplexStream) -> PostgresBackend<tokio::io::DuplexStream> {
+        let mut backend = PostgresBackend::new_from_io(
+            -1, io, "127.0.0.1:1".parse().unwrap(), AuthType::NeonJWT, None,
+        ).unwrap();
+        backend.state = ProtoState::Authentication;
+        backend
+    }
+
+    #[tokio::test]
+    async fn oversized_auth_header_is_rejected_before_body_reservation() {
+        let (server, mut client) = tokio::io::duplex(64);
+        let mut backend = connection(server);
+        let mut validator = Validator { calls: 0 };
+        client.write_all(b"p\0\x10\0\x04").await.unwrap(); // Announce 1 MiB, send no body.
+        let result = tokio::time::timeout(Duration::from_millis(100), backend.handshake(&mut validator)).await;
+        if let MaybeWriteOnly::Full(framed) = &backend.framed {
+            assert!(framed.read_buf.capacity() <= 128 * 1024, "unauthenticated header reserved {} bytes", framed.read_buf.capacity());
+        }
+        assert!(result.expect("authentication waited for an oversized body").is_err());
+        assert_eq!(validator.calls, 0);
+    }
+
+    #[tokio::test]
+    async fn invalid_password_terminator_never_reaches_validator() {
+        let (server, mut client) = tokio::io::duplex(64);
+        let mut backend = connection(server);
+        let mut validator = Validator { calls: 0 };
+        client.write_all(b"p\0\0\0\x0bsecret!").await.unwrap();
+        assert!(backend.handshake(&mut validator).await.is_err());
+        assert_eq!(validator.calls, 0);
+    }
+
+    #[tokio::test]
+    async fn terminated_passwords_through_the_auth_limit_reach_validator() {
+        for length in [7, MAX_AUTH_PAYLOAD_BYTES] {
+            let (server, mut client) = tokio::io::duplex(MAX_AUTH_PAYLOAD_BYTES + 5);
+            let mut backend = connection(server);
+            let mut validator = Validator { calls: 0 };
+            let mut frame = vec![b'p'];
+            frame.extend_from_slice(&((length + 4) as u32).to_be_bytes());
+            frame.resize(length + 5, b'x');
+            *frame.last_mut().unwrap() = 0;
+            client.write_all(&frame).await.unwrap();
+            assert!(backend.handshake(&mut validator).await.is_err());
+            assert_eq!(validator.calls, 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn unexpected_auth_message_does_not_echo_payload() {
+        let (server, mut client) = tokio::io::duplex(128);
+        let mut backend = connection(server);
+        let mut validator = Validator { calls: 0 };
+        let body = b"credential-marker-must-not-be-logged\0";
+        let mut frame = vec![b'Q'];
+        frame.extend_from_slice(&((body.len() + 4) as u32).to_be_bytes());
+        frame.extend_from_slice(body);
+        client.write_all(&frame).await.unwrap();
+        let error = backend.handshake(&mut validator).await.unwrap_err();
+        assert!(!format!("{error:#}").contains("credential-marker"));
+        assert_eq!(validator.calls, 0);
+    }
+}
+
 impl FromStr for AuthType {
     type Err = anyhow::Error;
 
@@ -244,6 +328,14 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> MaybeWriteOnly<IO> {
             MaybeWriteOnly::WriteOnly(_) => {
                 Err(io::Error::other("reading from write only half").into())
             }
+            MaybeWriteOnly::Broken => panic!("IO on invalid MaybeWriteOnly"),
+        }
+    }
+
+    async fn read_auth_message(&mut self) -> Result<Option<FeMessage>, ConnectionError> {
+        match self {
+            MaybeWriteOnly::Full(framed) => framed.read_message_limited(MAX_AUTH_PAYLOAD_BYTES).await,
+            MaybeWriteOnly::WriteOnly(_) => Err(io::Error::other("authentication in split state").into()),
             MaybeWriteOnly::Broken => panic!("IO on invalid MaybeWriteOnly"),
         }
     }
@@ -611,11 +703,16 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> PostgresBackend<IO> {
 
         // Perform auth, if needed.
         if self.state == ProtoState::Authentication {
-            match self.framed.read_message().await? {
+            match self.framed.read_auth_message().await? {
                 Some(FeMessage::PasswordMessage(m)) => {
                     assert!(self.auth_type == AuthType::NeonJWT);
 
-                    let (_, jwt_response) = m.split_last().context("protocol violation")?;
+                    let (terminator, jwt_response) = m.split_last().context("protocol violation")?;
+                    if *terminator != 0 {
+                        return Err(ConnectionError::Protocol(ProtocolError::Protocol(
+                            "password message must end with NUL".into(),
+                        )).into());
+                    }
 
                     if let Err(e) = handler.check_auth_jwt(self, jwt_response) {
                         self.write_message_noflush(&BeMessage::ErrorResponse(
@@ -631,10 +728,9 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> PostgresBackend<IO> {
                         .await?;
                     self.state = ProtoState::Established;
                 }
-                Some(m) => {
+                Some(_) => {
                     return Err(QueryError::Other(anyhow::anyhow!(
-                        "Unexpected message {:?} while waiting for handshake",
-                        m
+                        "unexpected frontend message during authentication"
                     )));
                 }
                 None => {

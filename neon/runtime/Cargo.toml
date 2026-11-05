@@ -67,10 +67,10 @@ flate2 = "1.0.26"
 assert-json-diff = "2"
 async-stream = "0.3"
 async-trait = "0.1"
-aws-config = { version = "1.5", default-features = false, features=["rustls", "sso"] }
-aws-sdk-s3 = "1.52"
-aws-sdk-iam = "1.46.0"
-aws-sdk-kms = "1.47.0"
+aws-config = { version = "1.13", default-features = false, features=["default-https-client", "rt-tokio", "sso"] }
+aws-sdk-s3 = { version = "1.157", default-features = false, features = ["default-https-client", "rt-tokio", "sigv4a"] }
+aws-sdk-iam = { version = "1.133", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-kms = { version = "1.129", default-features = false, features = ["default-https-client", "rt-tokio"] }
 aws-smithy-async = { version = "1.2.1", default-features = false, features=["rt-tokio"] }
 aws-smithy-types = "1.2"
 aws-credential-types = "1.2.0"
@@ -128,7 +128,7 @@ ipnet = "2.10.0"
 itertools = "0.10"
 itoa = "1.0.11"
 jemalloc_pprof = { version = "0.7", features = ["symbolize", "flamegraph"] }
-jsonwebtoken = "9"
+jsonwebtoken = { version = "10.3", features = ["rust_crypto"] }
 lasso = "0.7"
 libc = "0.2"
 lock_api = "0.4.13"
@@ -170,7 +170,7 @@ reqwest-retry = "0.7"
 routerify = "3"
 rpds = "0.13"
 rustc-hash = "2.1.1"
-rustls = { version = "0.23.16", default-features = false }
+rustls = { version = "0.23.46", default-features = false }
 rustls-pemfile = "2"
 rustls-pki-types = "1.11"
 scopeguard = "1.1"
@@ -181,7 +181,7 @@ sentry = { version = "0.37", default-features = false, features = ["backtrace", 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
 serde_path_to_error = "0.1"
-serde_with = { version = "3", features = [ "base64" ] }
+serde_with = { version = "3.21", features = [ "base64" ] }
 serde_assert = "0.5.0"
 serde_repr = "0.1.20"
 sha2 = "0.10.2"
@@ -195,7 +195,7 @@ strum_macros = "0.26"
 "subtle"  = "2.5.0"
 svg_fmt = "0.4.3"
 sync_wrapper = "0.1.2"
-tar = "0.4"
+tar = "0.4.46"
 test-context = "0.3"
 thiserror = "1.0"
 tikv-jemallocator = { version = "0.6", features = ["profiling", "stats", "unprefixed_malloc_on_supported_platforms"] }
@@ -245,8 +245,8 @@ log = "0.4"
 ## Libraries from neondatabase/ git forks, ideally with changes to be upstreamed
 postgres = { git = "https://github.com/neondatabase/rust-postgres.git", branch = "neon" }
 postgres-protocol = { git = "https://github.com/neondatabase/rust-postgres.git", branch = "neon" }
-postgres-types = { git = "https://github.com/neondatabase/rust-postgres.git", branch = "neon" }
-tokio-postgres = { git = "https://github.com/neondatabase/rust-postgres.git", branch = "neon" }
+postgres-types = { path = "vendor/neon-postgres-types" }
+tokio-postgres = { path = "vendor/neon-tokio-postgres" }
 
 ## Azure SDK crates
 azure_core = { git = "https://github.com/neondatabase/azure-sdk-for-rust.git", branch = "neon", default-features = false, features = ["enable_reqwest_rustls", "hmac_rust"] }
@@ -300,9 +300,11 @@ camino-tempfile = "1.0.2"
 tonic-build = "0.13.1"
 
 [patch.crates-io]
+postgres-types = { path = "vendor/neon-postgres-types" }
+postgres-protocol = { path = "vendor/neon-postgres-protocol" }
 
 # Needed to get `tokio-postgres-rustls` to depend on our fork.
-tokio-postgres = { git = "https://github.com/neondatabase/rust-postgres.git", branch = "neon" }
+tokio-postgres = { path = "vendor/neon-tokio-postgres" }
 
 ################# Binary contents sections
 
@@ -372,3 +374,6 @@ lto = true
 # Actual upstream security release with the Neon replication additions rebased.
 [patch."https://github.com/neondatabase/rust-postgres.git"]
 postgres-protocol = { path = "vendor/neon-postgres-protocol" }
+
+tokio-postgres = { path = "vendor/neon-tokio-postgres" }
+postgres-types = { path = "vendor/neon-postgres-types" }

@@ -5,8 +5,11 @@ edition = "2024"
 license.workspace = true
 
 [dependencies]
-aws-smithy-runtime = { version = "=1.7.4", features = ["client", "connector-hyper-0-14-x", "tls-rustls"] }
-hyper-rustls-014 = { package = "hyper-rustls", version = "=0.24.0", default-features = false, features = ["native-tokio", "http1", "tls12"] }
+aws-smithy-runtime = { version = "1.16.2", features = ["client", "connector-hyper-0-14-x"] }
+hyper0 = { workspace = true, features = ["client", "tcp"] }
+hyper-tls = "0.5"
+native-tls = "0.2"
+tokio-native-tls = "0.3"
 anyhow.workspace = true
 async-trait.workspace = true
 async-stream.workspace = true

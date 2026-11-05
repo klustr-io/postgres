@@ -14,6 +14,56 @@ use crate::statement::Column;
 use crate::types::{FromSql, Type, WrongType};
 use crate::{Error, Statement};
 
+// RowDescription and DataRow arrive independently from an untrusted server.
+// Reject a mismatch before any accessor can index beyond the field ranges.
+fn checked_ranges(body: &DataRowBody, columns: usize) -> Result<Vec<Option<Range<usize>>>, Error> {
+    let ranges: Vec<_> = body.ranges().collect().map_err(Error::parse)?;
+    if ranges.len() != columns {
+        return Err(Error::parse(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "DataRow field count does not match the number of columns",
+        )));
+    }
+    Ok(ranges)
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+    use bytes::BytesMut;
+    use postgres_protocol2::message::backend::Message;
+
+    fn row(fields: &[&[u8]]) -> DataRowBody {
+        let mut body = BytesMut::new();
+        body.extend_from_slice(&(fields.len() as u16).to_be_bytes());
+        for field in fields {
+            body.extend_from_slice(&(field.len() as i32).to_be_bytes());
+            body.extend_from_slice(field);
+        }
+        let mut frame = BytesMut::new();
+        frame.extend_from_slice(b"D");
+        frame.extend_from_slice(&(body.len() as i32 + 4).to_be_bytes());
+        frame.extend_from_slice(&body);
+        match Message::parse(&mut frame).unwrap().unwrap() {
+            Message::DataRow(body) => body,
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn mismatched_data_row_fields_are_rejected() {
+        assert!(checked_ranges(&row(&[b"x"]), 2).is_err());
+        assert!(checked_ranges(&row(&[b"x", b"y"]), 1).is_err());
+        assert!(checked_ranges(&row(&[]), 1).is_err());
+    }
+
+    #[test]
+    fn matching_data_row_fields_are_accepted() {
+        assert_eq!(checked_ranges(&row(&[b"x", b"y"]), 2).unwrap().len(), 2);
+        assert!(checked_ranges(&row(&[]), 0).unwrap().is_empty());
+    }
+}
+
 mod sealed {
     pub trait Sealed {}
 
@@ -118,7 +168,7 @@ impl Row {
         body: DataRowBody,
         output_format: Format,
     ) -> Result<Row, Error> {
-        let ranges = body.ranges().collect().map_err(Error::parse)?;
+        let ranges = checked_ranges(&body, statement.columns().len())?;
         Ok(Row {
             statement,
             body,
@@ -238,7 +288,7 @@ impl SimpleQueryRow {
         columns: Arc<[SimpleColumn]>,
         body: DataRowBody,
     ) -> Result<SimpleQueryRow, Error> {
-        let ranges = body.ranges().collect().map_err(Error::parse)?;
+        let ranges = checked_ranges(&body, columns.len())?;
         Ok(SimpleQueryRow {
             columns,
             body,

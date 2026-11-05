@@ -112,6 +112,35 @@ That check led to another storage improvement. DOCB now compresses full bases wh
 
 Any logical replication slot in a database selects full value writes for CDC correctness, which removes the delta write benefit there. Existing files containing DOCB deltas also require a compatible engine; exporting to JSONB provides a path back to an engine without DOCB support.
 
+## Hardening the connections behind those writes
+
+Reworking a database write path also means reviewing how it handles malformed input, authentication and connections that stop making progress. Our security review reproduced defects in the current fork and added regression checks alongside the repairs.
+
+Storage authentication now limits a password frame to 64 KiB before reserving space for its body, checks its terminating byte and keeps unexpected message payloads out of authentication errors. Truncated Describe and Close messages now return parsing errors rather than panicking. These repairs are in the [storage authentication backend](neon/runtime/libs/postgres_backend/src/lib.rs) and [frontend protocol parser](neon/runtime/libs/pq_proto/src/lib.rs).
+
+We also addressed a PostgreSQL client issue where a server could advertise one column count and return a different number of fields. Later access to that row could panic. The [upstream repair](https://github.com/rust-postgres/rust-postgres/commit/7a00ffa9ad4d951ec0a4564b52f1780fa9d353c1) validates those counts when constructing the row. Our normal client now carries that protection on upstream 0.7.18, with Neon's replication and COPY BOTH support retained. We applied the same validation to our renamed client, which needed separate review because its package name differs from the upstream dependency.
+
+A storage peer that stopped reading could also leave native WAL feedback or connection cleanup waiting indefinitely. The [WAL connection repair](neon/runtime/safekeeper/src/wal_service.rs) adds a write deadline when the native API is enabled. The deadline applies to socket progress; accepted disk mutations finish through their existing durability path.
+
+The dependency work updated the AWS SDK, TLS, JWT, RSA and database adapter packages. Smithy JSON now resolves to 0.65.1, beyond the patched version identified in [AWS's CVE-2026-18140 bulletin](https://aws.amazon.com/security/security-bulletins/2026-067-aws/). That bulletin describes an attack against generated servers; our inventory match came from the SDK client dependencies. The update also preserves the HTTP/1.1 upload option and compatible request checksum behavior for custom S3 endpoints. The [resolved lockfile](neon/runtime/Cargo.lock) records the versions used.
+
+Across the same three source lockfiles, the November 5 scan changed as follows. These are package and advisory matches, so one advisory can appear against more than one installed version. The [security review](neon/docs/neon-production/architecture/SecurityReview.md) records the comparison and its scope.
+
+| Scanner severity | Before | After |
+| --- | ---: | ---: |
+| Critical | 0 | 0 |
+| High | 6 | 0 |
+| Medium | 20 | 2 |
+| Low | 25 | 4 |
+
+The two medium findings remain visible. [CVE-2026-48504](https://github.com/open-telemetry/opentelemetry-rust/security/advisories/GHSA-w9wp-h8wv-79jx) concerns memory allocation while processing OpenTelemetry baggage. Our runtime installs the W3C TraceContext propagator, and the review found no baggage propagation or mutation calls. [CVE-2026-43868](https://nvd.nist.gov/vuln/detail/CVE-2026-43868) concerns excessive allocation in Apache Thrift. Our proxy writes Parquet telemetry; the reader calls found during review are inside its test module. Those dependencies remain in the inventory, along with four low findings, and their exposure assessment needs revisiting as the code evolves.
+
+Verification included **33 focused Rust tests**, sanitizer and leak detection checks on the native quorum and libpq ownership fixtures, and **200 reconnect/reset cycles** with balanced descriptor reservations. A separate live screen made **280 connections**, including **128 malformed streams that were rejected**. All three storage processes survived, descriptor counts returned to their baselines and the largest RSS increase was **448 KiB per process**. These short checks passed on isolated temporary storage; long duration memory behavior and failures of persistent storage still need qualification. The [review](neon/docs/neon-production/architecture/SecurityReview.md#verification) documents those limits and the individual checks.
+
+We have added [publication checks](neon/dev/checks/security/scan-release.mjs) that scan the built OCI archives before a push. Critical and high findings block publication, together with selected authentication, TLS, row parsing and SQL construction advisories at medium severity. Scanner failures, missing package inventories and an outdated vulnerability database also stop publication. Both the coordinated release and controller publication workflows use this gate in the updated source.
+
+This security changeset is awaiting its first completed OCI publication. All eight runtime binary targets type-check, while a complete OCI rebuild, linking and image scans remain ahead. Existing published images do not contain these security fixes. That distinction matters for anyone choosing an image from this post: the source scan results above describe the updated lockfiles, and fresh archives must pass their own checks before release.
+
 ## Run it yourself, or explore it with Klustr
 
 We are building this for teams that want PostgreSQL's ecosystem, document workloads and the ability to stop paying for idle compute. The repository brings the PostgreSQL engine, Neon services, proxy and tenant controller together, with Docker Compose and Kubernetes deployment support. Databases can have their own sizing and suspension policies, including staying active when that is the right choice.
@@ -122,4 +151,4 @@ For a hosted route, visit [Klustr](https://klustr.io) to explore running Neon th
 
 The [benchmark runner and reproduction instructions](neon/tests/README.md#native-docb-storage) accompany the implementation, together with the [document results](neon/tests/neon/performance/docb-results.json) and [quorum results](neon/tests/neon/performance/quorum-io-results.json). This post was updated on November 5, 2026. Full local diagnostic logs remain outside the public source checkout.
 
-We are committed to extending Neon further through open source work on document storage, durable writes, branching and the economics of a database that can sleep. We will keep publishing the code and the measurements as we close the gap to native PostgreSQL, and bring that work to teams running their own infrastructure and those building on [Klustr](https://klustr.io). The goal remains a PostgreSQL foundation that gives developers the performance they need and lets them stop paying for idle capacity.
+We are committed to extending Neon further through open source work on document storage, durable writes, security, branching and the economics of a database that can sleep. We will keep publishing the code and the measurements as we close the gap to native PostgreSQL, and bring that work to teams running their own infrastructure and those building on [Klustr](https://klustr.io). The goal remains a PostgreSQL foundation that gives developers the performance they need and lets them stop paying for idle capacity.

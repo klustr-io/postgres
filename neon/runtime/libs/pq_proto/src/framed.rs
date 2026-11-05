@@ -93,6 +93,12 @@ impl<S: AsyncRead + Unpin> Framed<S> {
     pub async fn read_message(&mut self) -> Result<Option<FeMessage>, ConnectionError> {
         read_message(&mut self.stream, &mut self.read_buf, FeMessage::parse).await
     }
+
+    /// Limit a phase-specific payload before reserving space for its body.
+    pub async fn read_message_limited(&mut self, max_payload: usize) -> Result<Option<FeMessage>, ConnectionError> {
+        read_message(&mut self.stream, &mut self.read_buf,
+            |buffer| parse_message_limited(buffer, max_payload)).await
+    }
 }
 
 impl<S: AsyncWrite + Unpin> Framed<S> {
