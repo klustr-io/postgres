@@ -1,4 +1,4 @@
-# Security hardening — unreleased
+# Security hardening, candidate build 7bb4ca0
 
 Bounds unauthenticated storage-protocol frames, rejects truncated Describe/Close
 messages, removes credential payloads from authentication errors, and gives native
@@ -15,8 +15,13 @@ with a regression test covering both compiled Rustls backends.
 
 The source dependency scan reports no critical/high findings. Two medium findings
 remain. The [security review](docs/neon-production/architecture/SecurityReview.md)
-records their exposure, verification scope and limitations. Existing published images do not contain this
-changeset; a fresh OCI build and image scan are still required.
+records their exposure, verification scope and limitations. All seven AMD64 images
+were built, scanned and published in
+[GitHub run 41985026493](https://github.com/klustr-io/postgres/actions/runs/41985026493)
+with tag `sha-7bb4ca09813d4a4a83e0f4d59323fdd1581e2b5e`. Independent anonymous
+manifest/config checks matched the published digests, platform and source revision.
+Image scans have no critical/high findings; remaining medium, low and unknown
+matches are recorded in the review. Production qualification remains open.
 
 # Native WAL ingestion and quorum completion - experimental changeset
 

@@ -141,7 +141,24 @@ Verification included **34 focused Rust tests**, sanitizer and leak detection ch
 
 We have added [publication checks](neon/dev/checks/security/scan-release.mjs) that scan the built OCI archives before a push. Critical and high findings block publication, together with selected authentication, TLS, row parsing and SQL construction advisories at medium severity. Scanner failures, missing package inventories and an outdated vulnerability database also stop publication. Both the coordinated release and controller publication workflows use this gate in the updated source.
 
-This security changeset is awaiting its first completed OCI publication. All eight runtime binary targets type-check, while a complete OCI rebuild, linking and image scans remain ahead. Existing published images do not contain these security fixes. That distinction matters for anyone choosing an image from this post: the source scan results above describe the updated lockfiles, and fresh archives must pass their own checks before release.
+The [GitHub OCI build](https://github.com/klustr-io/postgres/actions/runs/41985026493) for [commit 7bb4ca0](https://github.com/klustr-io/postgres/commit/7bb4ca09813d4a4a83e0f4d59323fdd1581e2b5e) completed successfully on November 5. All seven AMD64 images passed the configured publication security gates and are publicly pullable with tag `sha-7bb4ca09813d4a4a83e0f4d59323fdd1581e2b5e`. We independently checked each published digest, source revision and platform against the release receipt. Native OAuth login, opaque token introspection and the check that statement telemetry leaves the idle timer intact also passed.
+
+Fresh image scans reported zero critical or high findings across all seven components. Their broader inventories include operating system packages and retain the following matches. These counts are separate from the source lockfile comparison above; operating system findings need their own exposure review. The [publication artifact](https://github.com/klustr-io/postgres/actions/runs/41985026493/artifacts/13397726298) contains the digest manifest and complete scan reports.
+
+| Image group | Critical | High | Medium | Low | Unknown severity |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Compute and pageserver, each | 0 | 0 | 50 | 34 | 4 |
+| Safekeeper and proxy, each | 0 | 0 | 23 | 21 | 4 |
+| Storage controller and storage broker, each | 0 | 0 | 23 | 20 | 4 |
+| Tenant controller | 0 | 0 | 26 | 12 | 4 |
+
+For example, the compute image is available as:
+
+```sh
+docker pull ghcr.io/klustr-io/neon-compute:sha-7bb4ca09813d4a4a83e0f4d59323fdd1581e2b5e
+```
+
+The pageserver, safekeeper, storage controller, storage broker, proxy and tenant controller use the same tag under their `ghcr.io/klustr-io/neon-` image names. These are development candidate images. The build and security gates passed; qualification for persistent media failures, recovery across zones and long duration memory behavior remains ahead.
 
 ## Run it yourself, or explore it with Klustr
 

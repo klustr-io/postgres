@@ -1,9 +1,12 @@
 # Release security review
 
 Reviewed on 5 November 2026, starting from `2779e4e1b3923bb38a522390ce82bb2506e2fbb7`.
-Source hardening and focused verification are complete; OCI rebuild and scanning
-remain pending for this changeset. Published
-`sha-2779e4e1b3923bb38a522390ce82bb2506e2fbb7` images do not contain them.
+Source hardening, the complete OCI build and publication security gates passed in
+[GitHub run 41985026493](https://github.com/klustr-io/postgres/actions/runs/41985026493).
+All seven public AMD64 images use tag
+`sha-7bb4ca09813d4a4a83e0f4d59323fdd1581e2b5e`. Their digests, source labels and
+platforms were independently verified against the publication receipt.
+The earlier `sha-2779e4e1b3923bb38a522390ce82bb2506e2fbb7` images lack these fixes.
 
 ## Reproduced defects and repairs
 
@@ -24,8 +27,9 @@ validation tests pass. Both client variants are covered by image-build regressio
 
 Thirty-four focused Rust tests passed across frontend framing, authentication,
 both PostgreSQL clients, JWT validation, S3 transport and native WAL safety/deadlines.
-All eight runtime binary targets type-check with Rust 1.99.1; this does not replace
-the pending complete OCI build and link checks.
+All eight runtime binary targets type-check with Rust 1.99.1. The subsequent
+GitHub source build, linking, image smoke checks, native OAuth/introspection
+qualification and idle-safe statement telemetry qualification passed.
 Authentication tests cover
 valid frames through the 64 KiB limit as well as malformed input. The frontend
 screen includes 4,096 short frames. Signed JWTs with malformed optional expiration
@@ -87,7 +91,7 @@ to match its result type under the newer compiler.
 The database image build disables Readline in psql to remove its ncurses dependency.
 A psql build and dynamic dependency check passed without Readline, tinfo or ncurses.
 This removes interactive line editing/history from the packaged psql client.
-Fresh image scans must confirm the resulting runtime inventory before publication.
+The subsequent image scans passed the publication gates with no critical or high findings.
 
 Two medium inventory findings remain:
 
@@ -115,7 +119,24 @@ Both the coordinated release publisher and the controller-only workflow use this
 gate. The controller workflow builds an archive, scans it and pushes that same
 archive. Reports are retained as workflow artifacts. The gate rejected an existing
 compute archive and accepted the controller archive, exercising both outcomes.
-The workflow changes have been validated locally; their first complete OCI run is pending.
+The first complete coordinated publication passed. The controller-only workflow
+also passed after correcting Linux report-directory ownership and converting its
+attested image to the Docker-compatible archive format used by the scanner.
+
+The [publication artifact](https://github.com/klustr-io/postgres/actions/runs/41985026493/artifacts/13397726298)
+contains the manifest, checksums and per-image reports. Broader image inventories
+retain OS and dependency findings beyond the source-lockfile counts above:
+
+| Image group | Critical | High | Medium | Low | Unknown severity |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Compute and pageserver, each | 0 | 0 | 50 | 34 | 4 |
+| Safekeeper and proxy, each | 0 | 0 | 23 | 21 | 4 |
+| Storage controller and storage broker, each | 0 | 0 | 23 | 20 | 4 |
+| Tenant controller | 0 | 0 | 26 | 12 | 4 |
+
+Passing these gates does not close the remaining findings or complete production
+HA, persistent-media or long-duration qualification. The manifest retains
+`production_qualified: false`.
 
 To scan a completed local build without publishing:
 
