@@ -169,14 +169,10 @@ fn acquire_lsn_lease_libpq(
     let mut client = config.connect(NoTls)?;
     let cmd = format!("lease lsn {tenant_shard_id} {timeline_id} {lsn} ");
     let res = client.simple_query(&cmd)?;
-    let msg = match res.first() {
-        Some(msg) => msg,
-        None => bail!("empty response"),
-    };
-    let row = match msg {
-        SimpleQueryMessage::Row(row) => row,
-        _ => bail!("error parsing lsn lease response"),
-    };
+    let row = res.iter().find_map(|message| match message {
+        SimpleQueryMessage::Row(row) => Some(row),
+        _ => None,
+    }).context("missing row in lsn lease response")?;
 
     // Note: this will be None if a lease is explicitly not granted.
     let valid_until_str = row.get("valid_until");
