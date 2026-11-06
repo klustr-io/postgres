@@ -646,7 +646,16 @@ async fn identify_system(client: &Client) -> anyhow::Result<IdentifySystem> {
 
     // extract the row contents into an IdentifySystem struct.
     // written as a closure so I can use ? for Option here.
-    if let Some(SimpleQueryMessage::Row(first_row)) = response.first() {
+    // Recent tokio-postgres versions expose RowDescription before DataRow.
+    // Select the single protocol row instead of assuming it is message zero.
+    let mut rows = response.iter().filter_map(|message| match message {
+        SimpleQueryMessage::Row(row) => Some(row),
+        _ => None,
+    });
+    if let Some(first_row) = rows.next() {
+        if first_row.len() != 4 || rows.next().is_some() {
+            return Err(IdentifyError.into());
+        }
         Ok(IdentifySystem {
             systemid: get_parse(first_row, 0)?,
             timeline: get_parse(first_row, 1)?,
@@ -655,5 +664,93 @@ async fn identify_system(client: &Client) -> anyhow::Result<IdentifySystem> {
         })
     } else {
         Err(IdentifyError.into())
+    }
+}
+
+#[cfg(test)]
+mod identify_system_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    fn message(tag: u8, payload: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![tag];
+        bytes.extend_from_slice(&((payload.len() + 4) as u32).to_be_bytes());
+        bytes.extend_from_slice(payload);
+        bytes
+    }
+
+    async fn response(lsn: Option<&str>) -> anyhow::Result<IdentifySystem> {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let lsn = lsn.map(str::to_owned);
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let length = stream.read_u32().await.unwrap();
+            let mut startup = vec![0; length as usize - 4];
+            stream.read_exact(&mut startup).await.unwrap();
+            stream.write_all(&message(b'R', &0u32.to_be_bytes())).await.unwrap();
+            stream.write_all(&message(b'Z', b"I")).await.unwrap();
+            assert_eq!(stream.read_u8().await.unwrap(), b'Q');
+            let length = stream.read_u32().await.unwrap();
+            let mut query = vec![0; length as usize - 4];
+            stream.read_exact(&mut query).await.unwrap();
+            assert_eq!(query, b"IDENTIFY_SYSTEM\0");
+            let mut description = 4u16.to_be_bytes().to_vec();
+            for name in ["systemid", "timeline", "xlogpos", "dbname"] {
+                description.extend_from_slice(name.as_bytes());
+                description.push(0);
+                description.extend_from_slice(&0u32.to_be_bytes());
+                description.extend_from_slice(&0u16.to_be_bytes());
+                description.extend_from_slice(&25u32.to_be_bytes());
+                description.extend_from_slice(&(-1i16).to_be_bytes());
+                description.extend_from_slice(&(-1i32).to_be_bytes());
+                description.extend_from_slice(&0u16.to_be_bytes());
+            }
+            stream.write_all(&message(b'T', &description)).await.unwrap();
+            if let Some(lsn) = lsn {
+                let mut row = 4u16.to_be_bytes().to_vec();
+                for value in [Some("18446744073709551614"), Some("1"), Some(lsn.as_str()), None] {
+                    if let Some(value) = value {
+                        row.extend_from_slice(&(value.len() as i32).to_be_bytes());
+                        row.extend_from_slice(value.as_bytes());
+                    } else {
+                        row.extend_from_slice(&(-1i32).to_be_bytes());
+                    }
+                }
+                stream.write_all(&message(b'D', &row)).await.unwrap();
+            }
+            stream.write_all(&message(b'C', b"IDENTIFY_SYSTEM\0")).await.unwrap();
+            stream.write_all(&message(b'Z', b"I")).await.unwrap();
+            let _ = stream.read_u8().await;
+        });
+        let (client, connection) = tokio_postgres::Config::new()
+            .host("127.0.0.1").port(address.port()).user("protocol-test")
+            .connect(tokio_postgres::NoTls).await.unwrap();
+        let connection = tokio::spawn(async move { let _ = connection.await; });
+        let result = identify_system(&client).await;
+        drop(client);
+        server.await.unwrap();
+        connection.await.unwrap();
+        result
+    }
+
+    #[tokio::test]
+    async fn accepts_row_description_before_identify_row() {
+        let identity = response(Some("0/16DC0A0")).await.unwrap();
+        assert_eq!(identity.systemid, 18446744073709551614);
+        assert_eq!(identity.timeline, 1);
+        assert_eq!(identity.xlogpos, PgLsn::from(0x16DC0A0));
+        assert_eq!(identity.dbname, None);
+    }
+
+    #[tokio::test]
+    async fn rejects_metadata_without_identify_row() {
+        assert!(response(None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_wal_frontier() {
+        assert!(response(Some("not-an-lsn")).await.is_err());
     }
 }

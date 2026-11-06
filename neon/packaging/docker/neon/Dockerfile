@@ -83,6 +83,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=shared \
     && cargo test --locked --release -p postgres_backend --lib security_tests \
     && cargo test --locked --release -p utils --lib auth::tests \
     && cargo test --locked --release -p safekeeper --lib native_ \
+    && cargo test --locked --release -p pageserver --lib identify_system_tests \
     && cargo metadata --locked --format-version=1 > /out/qualification/dependency-resolution.json
 RUN rm -rf /out/qualification/runtime-tests \
     && strip --strip-unneeded /out/bin/* /opt/postgres/v18/bin/postgres /opt/postgres/v18/lib/neon*.so /opt/postgres/v18/lib/klustr_oauth.so \
