@@ -1200,7 +1200,143 @@ when a public help page has not yet been published.
 
 ## Packaged PostgreSQL extensions
 
-### Native DOCB documents (experimental)
+### JSONB storage switching and SQL migration (experimental source candidate)
+
+DOCB 0.2 lets applications keep their `jsonb` columns, operators, indexes and
+driver type mappings. The matching PostgreSQL engine uses DOCB storage mechanics
+for JSONB by default. New inserts store a full base; subsequent eligible updates
+store compact deltas. Small values and unsuitable updates retain full values.
+No extension, schema change or application setting is needed for this default.
+Existing explicit database, role, session and table settings remain respected.
+This source change requires rebuilt compute and pageserver/WAL-redo images; the published
+`sha-7bb4ca0...` image set does not contain it.
+
+Install the administrator commands in each database, or upgrade an existing
+DOCB installation, using an account allowed to manage extensions:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS docb;
+ALTER EXTENSION docb UPDATE TO '0.2';
+```
+
+These settings explicitly select the default already used by a new installation,
+or re-enable it after an opt-out. They affect future eligible writes without
+rewriting existing rows:
+
+```sql
+ALTER DATABASE app SET docb.jsonb_storage = 'docb'; -- new connections
+SET docb.jsonb_storage = 'docb';                  -- current connection
+```
+
+Existing records stay readable in their current format and are eligible for
+delta storage on subsequent updates. Reads do not silently rewrite data. To
+explicitly prepare every existing record, migrate a table and its existing
+partitions, or the current database:
+
+```sql
+CALL docb_migrate_table('public.documents', 'docb');
+CALL docb_migrate_database('docb');
+```
+
+To migrate back to ordinary JSONB storage:
+
+```sql
+CALL docb_migrate_table('public.documents', 'jsonb');
+-- Or migrate every supported relation and change the database default:
+CALL docb_migrate_database('jsonb');
+```
+
+The table procedure persists a `jsonb_storage` relation option, which overrides
+the connection default. To opt out for future writes without migrating:
+
+```sql
+ALTER DATABASE app SET docb.jsonb_storage = 'jsonb'; -- new connections
+SET docb.jsonb_storage = 'jsonb';                  -- current connection
+ALTER TABLE public.documents SET (jsonb_storage = 'jsonb'); -- table override
+```
+
+The table-specific opt-out takes precedence over
+the connection default. Consequently, a table migrated back to `jsonb` stays on
+ordinary storage even if an older connection still has the DOCB default enabled.
+Setting the GUC to `jsonb` alone stops new delta writes on inheriting tables; it
+does not convert existing deltas. Readers continue decoding both formats with
+either setting.
+
+Each table migration takes an exclusive maintenance lock, rewrites the heap and
+TOAST storage, and rebuilds indexes using PostgreSQL's existing physical rewrite
+path. Column types and dependent views retain their identities. The operation
+does not issue application UPDATEs or fire UPDATE triggers. Allow disk headroom
+for a replacement table and its indexes and expect WAL generation. This is not
+an online, constant-space migration. Normal lock/statement timeouts and query
+cancellation apply. A failed or rolled-back table migration rolls back its
+storage-policy change as well.
+
+Run the database procedure as a top-level `CALL`, outside an explicit transaction.
+It commits one physical relation at a time and emits committed checkpoints.
+Earlier tables remain migrated if a later one fails. Resume after a reported
+checkpoint with:
+
+```sql
+CALL docb_migrate_database('docb', 'public.last_completed_table');
+```
+
+Checkpoints use relation OID order and assume the selected tables are not dropped
+and recreated during the run. Repeating the command without a checkpoint safely
+rewrites all eligible relations again. Table migration uses the caller's ownership
+permissions; database migration additionally requires permission to change the
+database default. Neither command uses `SECURITY DEFINER`.
+
+Supported relations are user heap tables and populated materialized views with
+JSONB columns, including domains over JSONB. The table command includes existing
+descendants by default; pass `false` as its third argument to process only one
+physical table. Database migration processes individual physical tables,
+partitions and materialized views, excluding system schemas, temporary tables,
+foreign tables and custom table access methods. It acts only on the connected
+database, so fleet operators must invoke it separately for each database.
+New partitions need an explicit table policy or the configured database default.
+The legacy `docb` SQL type below is separate and is not renamed by these commands.
+
+Full bases still use canonical JSONB bytes. Forward migration prepares that
+storage for subsequent small updates; it does not manufacture delta records for
+unchanged documents. Inspect actual current delta values with:
+
+```sql
+SELECT count(*) FILTER (WHERE docb_is_delta(body)) AS delta_values,
+       count(*) AS rows
+FROM public.documents;
+```
+
+`EXPLAIN (VERBOSE)` adds a hint when a scanned relation has JSONB columns but
+its effective write policy is standard `jsonb` storage. It lists the relation's
+JSONB columns, distinguishes a table override from an inherited setting, and
+shows the table migration command. Structured properties are also available
+with `EXPLAIN (VERBOSE, FORMAT JSON)`:
+
+```sql
+EXPLAIN (VERBOSE) SELECT body->>'title' FROM public.documents;
+```
+
+The hint reports policy, not per-row format. A standard-storage table can still
+contain older deltas, and a DOCB-enabled table can contain untouched JSONB values.
+EXPLAIN does not read documents, count migrated rows, or establish migration
+completion. Normal EXPLAIN output remains unchanged; DOCB-enabled scans do not
+produce a storage warning.
+
+Reverse migration removes delta storage from the rewritten current relations;
+retained history, older branches, backups and WAL can still contain deltas and
+require compatible engines. This does not certify physical downgrade to stock PostgreSQL. Migration
+metadata and extension definitions are also fork-specific and need consideration
+when planning a logical export to another engine. Any logical replication slot
+continues selecting full-value writes for CDC correctness. The existing DOCB
+performance measurements used the separate DOCB type; no new performance result
+is claimed for this JSONB integration.
+
+The focused [migration check](neon/tests/neon/compute/docb_migration.py) uses a
+small disposable tmpfs database, without Kubernetes, S3 or retained test data.
+
+<a id="native-docb-documents-experimental"></a>
+
+### Legacy native DOCB type (experimental)
 
 The unpublished source build packages the native `docb` type and its engine
 storage support. Existing published images do not include it. Build compute and

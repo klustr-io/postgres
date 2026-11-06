@@ -1,6 +1,6 @@
 MODULES = docb
 EXTENSION = docb
-DATA = docb--0.1.sql
+DATA = docb--0.1.sql docb--0.1--0.2.sql
 PGFILEDESC = "docb - native document delta storage"
 
 ifdef USE_PGXS

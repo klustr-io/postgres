@@ -244,7 +244,7 @@ jsonb_subscript_fetch(ExprState *state,
 
 	/* Should not get here if source jsonb (or any subscript) is null */
 	Assert(!(*op->resnull));
-	if (workspace->isDocb)
+	if (workspace->isDocb || docb_is_delta_value(*op->resvalue))
 	{
 		*op->resvalue = docb_get_element(*op->resvalue, workspace->index,
 			sbsrefstate->numupper, op->resnull);

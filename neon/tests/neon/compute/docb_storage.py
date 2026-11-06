@@ -204,7 +204,7 @@ try:
     expect("SELECT '{\"a\":1,\"b\":[null,true,\"hi\",{\"c\":2}]}'::docb::jsonb = "
            "'{\"a\":1,\"b\":[null,true,\"hi\",{\"c\":2}]}'::jsonb")
     sql("CREATE TABLE docs(id int PRIMARY KEY, body docb); "
-        "CREATE TABLE reference(id int PRIMARY KEY, body jsonb); "
+        "CREATE TABLE reference(id int PRIMARY KEY, body jsonb) WITH (jsonb_storage=jsonb); "
         "CREATE TEMP TABLE seed AS SELECT jsonb_build_object('counter',0,'nested',"
         "jsonb_build_object('score',7,'list',jsonb_build_array(null,true,'text',1.5)),"
         "'payload',string_agg(md5(i::text),'') ) b FROM generate_series(1,2048) i; "

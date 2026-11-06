@@ -95,6 +95,7 @@
 #include "tsearch/ts_cache.h"
 #include "utils/builtins.h"
 #include "utils/bytea.h"
+#include "utils/docb.h"
 #include "utils/float.h"
 #include "utils/guc_hooks.h"
 #include "utils/guc_tables.h"
@@ -457,6 +458,12 @@ static const struct config_enum_entry shared_memory_options[] = {
 #ifdef WIN32
 	{"windows", SHMEM_TYPE_WINDOWS, false},
 #endif
+	{NULL, 0, false}
+};
+
+static const struct config_enum_entry docb_jsonb_storage_options[] = {
+	{"jsonb", DOCB_STORAGE_JSONB, false},
+	{"docb", DOCB_STORAGE_DOCB, false},
 	{NULL, 0, false}
 };
 
@@ -5144,6 +5151,17 @@ struct config_enum ConfigureNamesEnum[] =
 		&default_toast_compression,
 		TOAST_PGLZ_COMPRESSION,
 		default_toast_compression_options,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"docb.jsonb_storage", PGC_USERSET, CLIENT_CONN_STATEMENT,
+			gettext_noop("Selects the default physical storage for JSONB columns."),
+			gettext_noop("Existing values remain readable; table policies override this default.")
+		},
+		&docb_jsonb_storage,
+		DOCB_STORAGE_DOCB,
+		docb_jsonb_storage_options,
 		NULL, NULL, NULL
 	},
 

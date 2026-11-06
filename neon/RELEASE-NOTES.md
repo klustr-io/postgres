@@ -1,3 +1,39 @@
+# DOCB 0.2 JSONB storage and reversible migration - candidate
+
+DOCB 0.2 makes DOCB storage the default behind the existing JSONB SQL type.
+`docb.jsonb_storage` selects the connection/database default; a table's
+`jsonb_storage` option overrides it. Existing JSONB operators, subscripts, GIN
+indexes, views and driver type identity remain intact. Reading stored deltas
+does not depend on the current write setting.
+New inserts establish full bases and eligible updates use deltas; existing rows
+are not rewritten on reads. Standard JSONB storage remains an explicit opt-out.
+EXPLAIN VERBOSE reports standard-storage opt-outs with a migration hint, without
+inspecting physical rows or claiming that migration is complete.
+
+`CALL docb_migrate_table(relation, 'docb' | 'jsonb')` rewrites a table and its
+existing descendants under an exclusive maintenance lock. Returning to JSONB
+replaces the heap/TOAST storage, including obsolete delta versions. Both the
+rewrite and policy change are transactional. `docb_migrate_database` changes
+the database default, commits each supported physical relation separately and
+accepts an explicit resume-after relation. Commands retain caller ownership
+checks and do not use SECURITY DEFINER. They require rewrite disk/WAL headroom.
+
+The legacy DOCB type remains available. Logical slots still select full-value
+writes. Historical branches/backups retain their original format, and a reverse
+migration is not a stock-PostgreSQL physical downgrade certification. This is a
+source candidate requiring rebuilt engine/storage images, not part of the
+published security image tag. Existing performance figures are unchanged.
+Benchmark controls explicitly select standard JSONB so the new default does not
+silently change the meaning of their native/document/quorum comparisons.
+Validation: the engine and extension compiled; ten focused checks passed for
+default activation without an extension, EXPLAIN policy hints, JSONB compatibility,
+ownership, rollback, partition/domain/materialized-view migration, resume and
+immediate restart. Both existing JSONB regression groups passed under the new
+default. The image build now runs the focused migration check after the standard
+PostgreSQL regressions. These local checks used a disposable tmpfs fixture; no
+production, S3, multi-zone or new performance qualification is claimed.
+See [SQL migration and limitations](../DEPLOY.md#jsonb-storage-switching-and-sql-migration-experimental-source-candidate).
+
 # Security hardening, candidate build 7bb4ca0
 
 Bounds unauthenticated storage-protocol frames, rejects truncated Describe/Close

@@ -39,7 +39,8 @@ try:
     for shape, payload in [('poorly-compressible',"(SELECT string_agg(md5(i::text),'') FROM generate_series(1,2048) i)"),
                            ('compressible',"repeat('0123456789abcdef',4096)")]:
         for kind in ('jsonb','docb'):
-            sql(f'CREATE TABLE docs_{kind}(id int PRIMARY KEY,body {kind}); '
+            policy = ' WITH (jsonb_storage=jsonb)' if kind == 'jsonb' else ''
+            sql(f'CREATE TABLE docs_{kind}(id int PRIMARY KEY,body {kind}){policy}; '
                 f"INSERT INTO docs_{kind} SELECT i,jsonb_build_object('counter',0,'payload',{payload})::{kind} FROM generate_series(1,32) i; "
                 f'CREATE INDEX ON docs_{kind} USING gin(body {kind}_path_ops)')
         for kind in ('jsonb','docb','docb','jsonb'):

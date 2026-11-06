@@ -82,6 +82,25 @@ none is an application schema requirement or an enabled product optimization.
 
 ### Native DOCB storage
 
+JSONB storage switching and reversible SQL migration have a separate small check:
+
+```sh
+docker run --rm --network none --user 10002:10002 --cpus 2 --memory 1g \
+  --tmpfs /var/lib/neon:rw,nosuid,nodev,size=512m,uid=10002,gid=10002,mode=0700 \
+  --tmpfs /tmp:rw,nosuid,nodev,size=64m,mode=1777 \
+  --mount "type=bind,source=$PWD/neon/tests/neon/compute,target=/probe,readonly" \
+  --entrypoint python3 MATCHING_DIAGNOSTIC_IMAGE -B /probe/docb_migration.py
+```
+
+The diagnostic image needs Python and the rebuilt engine/DOCB 0.2 installation;
+set `DOCB_MIGRATION_PG_BIN` if its PostgreSQL binaries live elsewhere. The check
+covers the DOCB-backed JSONB default, explicit standard-storage opt-outs,
+EXPLAIN policy hints, extension upgrade, type/index/view compatibility,
+rollback, reverse rewrite, ownership, partitions, domains, materialized views,
+database checkpoints and immediate restart. It creates no Docker volume or S3 data.
+Document/compression/quorum controls explicitly request ordinary JSONB storage
+on the fork; unmodified upstream PostgreSQL receives no fork-specific options.
+
 Build the normal source image with `contrib/docb` and the matching core storage
 changes; the diagnostic image additionally needs unmodified PG18 in `/opt/upstream`
 and `neon_local`. Run the bounded groups sequentially:

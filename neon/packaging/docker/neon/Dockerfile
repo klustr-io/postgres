@@ -18,6 +18,8 @@ RUN mkdir -p /pgbuild/monorepo /out/qualification \
 RUN chown -R 10002:10002 /pgbuild/monorepo /pgsource/v18 /opt/postgres/v18
 USER 10002:10002
 RUN make -C /pgbuild/monorepo -j${BUILD_JOBS} check
+COPY --chown=10002:10002 neon/tests/neon/compute/docb_migration.py /qualification/docb_migration.py
+RUN DOCB_MIGRATION_TMPDIR=/tmp python3 -B /qualification/docb_migration.py
 USER root
 
 FROM engine AS extensions

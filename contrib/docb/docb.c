@@ -1,17 +1,73 @@
 /* SQL entry points for the core DOCB storage and projection implementation. */
 #include "postgres.h"
 #include "fmgr.h"
+#include "access/table.h"
+#include "access/xact.h"
+#include "access/xlog.h"
+#include "catalog/catalog.h"
+#include "catalog/pg_am_d.h"
+#include "catalog/pg_class.h"
 #include "catalog/pg_type_d.h"
+#include "commands/cluster.h"
+#include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/supportnodes.h"
 #include "parser/parse_func.h"
 #include "utils/array.h"
+#include "utils/acl.h"
 #include "utils/datum.h"
 #include "utils/docb.h"
 #include "utils/lsyscache.h"
+#include "utils/rel.h"
 
 PG_MODULE_MAGIC;
+
+PG_FUNCTION_INFO_V1(docb_storage_is_delta);
+Datum
+docb_storage_is_delta(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_BOOL(docb_is_delta_value(PG_GETARG_DATUM(0)));
+}
+
+PG_FUNCTION_INFO_V1(docb_storage_is_jsonb_type);
+Datum
+docb_storage_is_jsonb_type(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_BOOL(getBaseType(PG_GETARG_OID(0)) == JSONBOID);
+}
+
+/*
+ * Use the same physical rewrite as VACUUM FULL, without changing column types
+ * or invalidating dependent views.  cluster_rel owns and closes the relation,
+ * rebuilds indexes and keeps its lock until transaction end.  The SQL caller
+ * changes the storage policy in this same transaction before entering here.
+ */
+PG_FUNCTION_INFO_V1(docb_storage_rewrite_relation);
+Datum
+docb_storage_rewrite_relation(PG_FUNCTION_ARGS)
+{
+	Oid			relid = PG_GETARG_OID(0);
+	Relation	rel = table_open(relid, AccessExclusiveLock);
+	ClusterParams params = {0};
+
+	if (IsSystemRelation(rel) || RELATION_IS_OTHER_TEMP(rel) ||
+		(rel->rd_rel->relkind != RELKIND_RELATION &&
+		 rel->rd_rel->relkind != RELKIND_MATVIEW) ||
+		rel->rd_rel->relam != HEAP_TABLE_AM_OID)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("DOCB migration requires a user heap table or materialized view")));
+	if (!object_ownercheck(RelationRelationId, relid, GetUserId()))
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_TABLE, RelationGetRelationName(rel));
+	if (XactReadOnly || RecoveryInProgress())
+		ereport(ERROR,
+				(errcode(ERRCODE_READ_ONLY_SQL_TRANSACTION),
+				 errmsg("DOCB migration requires a writable primary")));
+
+	cluster_rel(rel, InvalidOid, &params);
+	PG_RETURN_VOID();
+}
 
 PG_FUNCTION_INFO_V1(docb_cast);
 Datum

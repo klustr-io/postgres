@@ -503,6 +503,9 @@ auth_enabled=true
             output.write('\nfsync=off\nsynchronous_commit=off\nneon.best_effort_commit=on\n')
         local('endpoint', 'start', 'bench', '--dev')
     sql("CREATE TABLE documents (id int PRIMARY KEY, doc jsonb NOT NULL); ")
+    if engine != 'upstream':
+        # Keep the quorum/standard-JSONB control independent of DOCB defaults.
+        sql('ALTER TABLE documents SET (jsonb_storage=jsonb)')
     if GROUP == 'jsonb-storage':
         if JSON_CASE == 'inline':
             sql('ALTER TABLE documents SET (toast_tuple_target=6000)')

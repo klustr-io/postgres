@@ -862,10 +862,14 @@ json_object_field(PG_FUNCTION_ARGS)
 Datum
 jsonb_object_field(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
+	Jsonb	   *jb;
 	text	   *key = PG_GETARG_TEXT_PP(1);
 	JsonbValue *v;
 	JsonbValue	vbuf;
+
+	if (docb_is_delta_value(PG_GETARG_DATUM(0)))
+		return docb_object_field(fcinfo);
+	jb = PG_GETARG_JSONB_P(0);
 
 	if (!JB_ROOT_IS_OBJECT(jb))
 		PG_RETURN_NULL();
@@ -900,10 +904,14 @@ json_object_field_text(PG_FUNCTION_ARGS)
 Datum
 jsonb_object_field_text(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
+	Jsonb	   *jb;
 	text	   *key = PG_GETARG_TEXT_PP(1);
 	JsonbValue *v;
 	JsonbValue	vbuf;
+
+	if (docb_is_delta_value(PG_GETARG_DATUM(0)))
+		return docb_object_field_text(fcinfo);
+	jb = PG_GETARG_JSONB_P(0);
 
 	if (!JB_ROOT_IS_OBJECT(jb))
 		PG_RETURN_NULL();
@@ -937,9 +945,13 @@ json_array_element(PG_FUNCTION_ARGS)
 Datum
 jsonb_array_element(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
+	Jsonb	   *jb;
 	int			element = PG_GETARG_INT32(1);
 	JsonbValue *v;
+
+	if (docb_is_delta_value(PG_GETARG_DATUM(0)))
+		return docb_array_element(fcinfo);
+	jb = PG_GETARG_JSONB_P(0);
 
 	if (!JB_ROOT_IS_ARRAY(jb))
 		PG_RETURN_NULL();
@@ -980,9 +992,13 @@ json_array_element_text(PG_FUNCTION_ARGS)
 Datum
 jsonb_array_element_text(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
+	Jsonb	   *jb;
 	int			element = PG_GETARG_INT32(1);
 	JsonbValue *v;
+
+	if (docb_is_delta_value(PG_GETARG_DATUM(0)))
+		return docb_array_element_text(fcinfo);
+	jb = PG_GETARG_JSONB_P(0);
 
 	if (!JB_ROOT_IS_ARRAY(jb))
 		PG_RETURN_NULL();
@@ -1488,12 +1504,16 @@ get_scalar(void *state, char *token, JsonTokenType tokentype)
 Datum
 jsonb_extract_path(PG_FUNCTION_ARGS)
 {
+	if (docb_is_delta_value(PG_GETARG_DATUM(0)))
+		return docb_extract_path(fcinfo);
 	return get_jsonb_path_all(fcinfo, false);
 }
 
 Datum
 jsonb_extract_path_text(PG_FUNCTION_ARGS)
 {
+	if (docb_is_delta_value(PG_GETARG_DATUM(0)))
+		return docb_extract_path_text(fcinfo);
 	return get_jsonb_path_all(fcinfo, true);
 }
 

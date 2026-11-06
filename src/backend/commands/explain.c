@@ -14,7 +14,9 @@
 #include "postgres.h"
 
 #include "access/xact.h"
+#include "catalog/catalog.h"
 #include "catalog/pg_type.h"
+#include "catalog/pg_type_d.h"
 #include "commands/createas.h"
 #include "commands/defrem.h"
 #include "commands/explain.h"
@@ -35,6 +37,7 @@
 #include "storage/bufmgr.h"
 #include "tcop/tcopprot.h"
 #include "utils/builtins.h"
+#include "utils/docb.h"
 #include "utils/guc_tables.h"
 #include "utils/json.h"
 #include "utils/lsyscache.h"
@@ -152,6 +155,7 @@ static void show_memory_counters(ExplainState *es,
 static void ExplainIndexScanDetails(Oid indexid, ScanDirection indexorderdir,
 									ExplainState *es);
 static void ExplainScanTarget(Scan *plan, ExplainState *es);
+static void ExplainJsonbStorageHint(PlanState *planstate, ExplainState *es);
 static void ExplainModifyTarget(ModifyTable *plan, ExplainState *es);
 static void ExplainTargetRel(Plan *plan, Index rti, ExplainState *es);
 static void show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
@@ -1933,7 +1937,10 @@ ExplainNode(PlanState *planstate, List *ancestors,
 
 	/* target list */
 	if (es->verbose)
+	{
 		show_plan_tlist(planstate, ancestors, es);
+		ExplainJsonbStorageHint(planstate, es);
+	}
 
 	/* unique join */
 	switch (nodeTag(plan))
@@ -4420,6 +4427,62 @@ static void
 ExplainScanTarget(Scan *plan, ExplainState *es)
 {
 	ExplainTargetRel((Plan *) plan, plan->scanrelid, es);
+}
+
+/*
+ * Report an explicit standard-storage choice without pretending to inspect
+ * physical rows.  This uses the relation already opened by ExecutorStart,
+ * including EXPLAIN_ONLY, and adds no scans, SQL calls or migration side effects.
+ * Default DOCB scans need no warning.  VERBOSE keeps ordinary plans unchanged.
+ */
+static void
+ExplainJsonbStorageHint(PlanState *planstate, ExplainState *es)
+{
+	Relation	rel;
+	List	   *columns = NIL;
+	int			policy;
+	int			i;
+	char	   *qualified;
+
+	switch (nodeTag(planstate->plan))
+	{
+		case T_SeqScan:
+		case T_SampleScan:
+		case T_IndexScan:
+		case T_IndexOnlyScan:
+		case T_BitmapHeapScan:
+		case T_TidScan:
+		case T_TidRangeScan:
+			break;
+		default:
+			return;
+	}
+	rel = ((ScanState *) planstate)->ss_currentRelation;
+	if (!rel || IsSystemRelation(rel))
+		return;
+	policy = rel->rd_options ? ((StdRdOptions *) rel->rd_options)->jsonb_storage :
+		DOCB_STORAGE_INHERIT;
+	if ((policy == DOCB_STORAGE_INHERIT ? docb_jsonb_storage : policy) != DOCB_STORAGE_JSONB)
+		return;
+	for (i = 0; i < RelationGetDescr(rel)->natts; i++)
+	{
+		Form_pg_attribute att = TupleDescAttr(RelationGetDescr(rel), i);
+
+		if (!att->attisdropped && getBaseType(att->atttypid) == JSONBOID)
+			columns = lappend(columns, pstrdup(NameStr(att->attname)));
+	}
+	if (columns == NIL)
+		return;
+	qualified = quote_qualified_identifier(get_namespace_name(RelationGetNamespace(rel)),
+										  RelationGetRelationName(rel));
+	ExplainPropertyList("Relation JSONB Columns", columns, es);
+	ExplainPropertyText("JSONB Write Storage", policy == DOCB_STORAGE_INHERIT ?
+						"jsonb (session/database default)" : "jsonb (table override)", es);
+	ExplainPropertyText("JSONB Storage Hint",
+		psprintf("DOCB writes are disabled. With the docb administrator extension installed, enable and rewrite this relation: CALL docb_migrate_table(%s, 'docb').",
+				 quote_literal_cstr(qualified)), es);
+	ExplainPropertyText("JSONB Stored Format",
+		"Not inspected; existing rows can still contain deltas. EXPLAIN does not verify migration completion.", es);
 }
 
 /*

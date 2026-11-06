@@ -41,6 +41,17 @@
 #define DOCB_LITERAL PG_UINT32_MAX
 #define DOCB_ANCHOR_SIZE 64
 
+int docb_jsonb_storage = DOCB_STORAGE_DOCB;
+
+static bool
+docb_jsonb_relation_enabled(Relation rel)
+{
+	int			policy = rel->rd_options ?
+		((StdRdOptions *) rel->rd_options)->jsonb_storage : DOCB_STORAGE_INHERIT;
+
+	return (policy == DOCB_STORAGE_INHERIT ? docb_jsonb_storage : policy) == DOCB_STORAGE_DOCB;
+}
+
 /* No bootstrap catalog change: only the packaged, owned pg_catalog type opts in. */
 bool
 docb_is_type(Oid typeid)
@@ -156,6 +167,13 @@ docb_is_delta(struct varlena *value)
 	}
 	return VARATT_IS_COMPRESSED(value) &&
 		TOAST_COMPRESS_METHOD(value) == TOAST_DOCB_COMPRESSION_ID;
+}
+
+/* Read policy never gates decoding values that are already stored as deltas. */
+bool
+docb_is_delta_value(Datum value)
+{
+	return docb_is_delta((struct varlena *) DatumGetPointer(value));
 }
 
 /* Read the encoded representation, without interpreting its compression ID. */
@@ -621,7 +639,9 @@ docb_toast_prepare(ToastTupleContext *ttc, int options)
 
 		if (att->attisdropped || att->attlen != -1 ||
 			(info->tai_colflags & TOASTCOL_IGNORE) || ttc->ttc_isnull[i] ||
-			!docb_is_type(att->atttypid))
+			!(docb_is_type(att->atttypid) ||
+			  (docb_jsonb_relation_enabled(ttc->ttc_rel) &&
+			   getBaseType(att->atttypid) == JSONBOID)))
 			continue;
 		newvalue = (struct varlena *) DatumGetPointer(ttc->ttc_values[i]);
 		flat = detoast_attr(newvalue);

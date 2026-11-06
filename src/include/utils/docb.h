@@ -5,6 +5,13 @@
 #include "access/toast_helper.h"
 #include "fmgr.h"
 
+/* JSONB keeps its SQL identity; this policy changes only physical storage. */
+#define DOCB_STORAGE_INHERIT (-1)
+#define DOCB_STORAGE_JSONB 0
+#define DOCB_STORAGE_DOCB 1
+
+extern int docb_jsonb_storage;
+extern bool docb_is_delta_value(Datum value);
 extern void docb_toast_prepare(ToastTupleContext *ttc, int options);
 extern void docb_delete_dependencies(Relation rel, Datum value, bool speculative);
 extern struct varlena *docb_decompress(struct varlena *value);
