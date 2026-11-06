@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use compute_api::spec::{ComputeMode, PageserverConnectionInfo, PageserverProtocol};
 use pageserver_page_api as page_api;
 use postgres::{NoTls, SimpleQueryMessage};
