@@ -32,6 +32,9 @@ immediate restart. Both existing JSONB regression groups passed under the new
 default. The image build now runs the focused migration check after the standard
 PostgreSQL regressions. These local checks used a disposable tmpfs fixture; no
 production, S3, multi-zone or new performance qualification is claimed.
+The pinned zlib archive now uses its versioned official GitHub release asset;
+the old current-release URL returned 404. Source version, bytes and SHA-256 are
+unchanged and the replacement download was independently hash-verified.
 See [SQL migration and limitations](../DEPLOY.md#jsonb-storage-switching-and-sql-migration-experimental-source-candidate).
 
 # Security hardening, candidate build 7bb4ca0
