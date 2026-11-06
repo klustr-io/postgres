@@ -59,6 +59,10 @@ try{
   if(process.argv.includes('--plan')){
     record.status='PLAN';record.toolchain=toolchain;save();console.log(JSON.stringify({output,source_digest:record.source_digest,toolchain,roles:['compute','pageserver','safekeeper','storage-controller','storage-broker','proxy','tenant-controller']},null,2));process.exit(0);
   }
+  // Fail missing package/bootstrap prerequisites before the native compiler work.
+  // The same content-addressed stage is reused by the final controller image.
+  build('controller-packages',['--file',path.join(context,'neon/packaging/docker/neon/runtime/Dockerfile.tenant-controller'),
+    '--target','packages',context]);
   if(!arg('--toolchain-image')){
     const native=path.join(output,'native');fs.mkdirSync(native);
     const lock=read('neon/packaging/neon/native-dependencies.lock.json');

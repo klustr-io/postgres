@@ -59,8 +59,9 @@ while read -r uri filename size digest; do
     temporary="/var/cache/apt/archives/partial/$filename.neon"
     verified=false
     for candidate in "$cdn" "$uri"; do
-        if curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 \
-            --output "$temporary" "$candidate" \
+        if /usr/lib/apt/apt-helper -o Acquire::Retries=0 \
+            -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
+            download-file "$candidate" "$temporary" "SHA256:$digest" \
             && test "$(wc -c < "$temporary")" -eq "$size" \
             && printf '%s  %s\n' "$digest" "$temporary" | sha256sum --check --status; then
             mv "$temporary" "$destination"
