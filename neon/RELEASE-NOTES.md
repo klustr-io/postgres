@@ -35,6 +35,10 @@ production, S3, multi-zone or new performance qualification is claimed.
 The pinned zlib archive now uses its versioned official GitHub release asset;
 the old current-release URL returned 404. Source version, bytes and SHA-256 are
 unchanged and the replacement download was independently hash-verified.
+SDK package acquisition retains the same dated, signed Debian indexes but
+prefetches exact package files from Debian's CDN, verifying size and SHA-256
+before offline APT installation. This avoids snapshot pool HTTP 504 stalls.
+Real package installation and rejection of correct-size corrupted bytes passed.
 See [SQL migration and limitations](../DEPLOY.md#jsonb-storage-switching-and-sql-migration-experimental-source-candidate).
 
 # Security hardening, candidate build 7bb4ca0
