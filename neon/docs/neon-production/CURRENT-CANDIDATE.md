@@ -1,5 +1,51 @@
 # Current candidate: PostgreSQL 18.6 / AMD64
 
+The candidate also includes the recovery protocol repair for PostgreSQL client
+row metadata. Pageserver IDENTIFY_SYSTEM and compute timeline/lease readers no
+longer assume that message zero is a data row. Image publication runs three
+focused IDENTIFY_SYSTEM wire-protocol tests; deployment restore and public-app
+availability must be checked separately after upgrading.
+
+The DOCB 0.2 candidate makes delta-backed storage the default behind ordinary
+JSONB columns. Application SQL, JSONB type identity, indexes and driver mappings
+remain intact. New inserts establish full bases, eligible updates use deltas,
+and reads never silently migrate existing rows. Standard storage is an explicit
+opt-out. SQL commands migrate a table or the current database in either direction;
+table rewrites take exclusive maintenance locks and database migration commits
+per relation with an explicit resume checkpoint. EXPLAIN VERBOSE reports
+standard-storage policy hints without inspecting stored documents.
+
+See [migration commands and limits](../../../DEPLOY.md#jsonb-storage-switching-and-sql-migration-experimental-source-candidate)
+and the [release notes](../../RELEASE-NOTES.md). The candidate passed
+native PostgreSQL compilation and all 231 regression tests, plus ten focused
+default/migration/EXPLAIN checks and both existing JSONB regression groups.
+[GitHub run 42215882461](https://github.com/klustr-io/postgres/actions/runs/42215882461)
+built and published all seven images with tag
+`sha-16c31bf0ccbc46870e93b2949d94af037231fd1e`. Native OAuth/introspection,
+idle-safe telemetry and all image security gates passed. Independent anonymous
+registry checks matched every digest, source revision, non-root user and AMD64
+platform to the publication receipt. Scans report zero critical/high matches;
+remaining findings are recorded in the [scan reports](https://github.com/klustr-io/postgres/actions/runs/42215882461/artifacts/13502569166).
+This remains an experimental candidate with `production_qualified: false`.
+Deployment restore and public-app recovery are not established by publication.
+
+## Latest recorded performance
+
+The experimental durable WAL execution refactor measured 58,767 TPS versus
+25,718 TPS for the earlier quorum path at 64 clients, a 2.29x improvement with
+local fsync and remote quorum still required. This is 49.5% of the separate
+118,622 TPS native PostgreSQL control; the 85% goal remains unmet.
+Earlier indexed 64 KiB document tests averaged 9,680 updates/sec with the separate
+DOCB type versus 1,705 for Neon JSONB, with about 50x less WAL per update.
+These were separate, short RAM-backed experiments, not combined speedups,
+persistent-media/S3 IOPS measurements or production capacity estimates.
+Transparent JSONB integration has no new throughput measurement yet.
+The [performance article](../../../blog.md) and
+[recorded quorum results](../../tests/neon/performance/quorum-io-results.json)
+describe the fixtures and limits.
+
+## Earlier RC5 qualification context
+
 `18.6-rc.5` includes KEDA/database/fleet lifecycle support, explicit suspend and
 guarded deletion, native snapshots with retention, and cloning/PITR to new branches.
 See [DEPLOY.md](../../../DEPLOY.md) for deployment instructions and scope.
@@ -16,7 +62,7 @@ clone readback: the restored JSONB document held version 1 while its source held
 version 2. The focused controller suite has 29 checks. These results do not certify
 scheduled expiry, production HA/RPO, independent DR or near-native performance.
 
-## Measured performance limits
+## Historical RC5 performance limits
 
 Prior single-host, 15-second JSONB/GIN intervals used 10,000 documents and normal
 EXTENDED storage. Durable native PG reached about 2,571 writes/sec, durable remote-
@@ -50,14 +96,15 @@ The candidate passed majority-loss blocking, cancellation without false success,
 quorum restoration, compute-crash readback and compute stop/wake checks. Its
 bounded-async check also excluded all old compute files before reconstruction.
 Shared storage stayed online; no OS power-loss, Kubernetes scheduling or
-multi-zone claim follows. This source candidate is not in the published images.
+multi-zone claim follows. This screen predates coordinated publication and is
+retained as implementation history, separate from the later quorum measurements.
 
 ## Remaining production gates
 
 - Controller HA, cross-worker fencing/migration and credential/certificate rotation.
 - Production storage failure domains and controller metadata-database recovery.
 - Sustained-load qualification of the accepted acknowledged-write loss envelope.
-- Near-native performance and transparent JSONB delta/projection mechanics.
+- Near-native performance and production qualification of JSONB delta/projection storage.
 
 The current controller implements configurable idle/never policies, writer
 reservations, admission closure, quorum drain and wake routing. It pins writers

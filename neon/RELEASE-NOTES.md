@@ -1,4 +1,28 @@
-# DOCB 0.2 JSONB storage and reversible migration - candidate
+# DOCB 0.2 JSONB storage and recovery repair - published candidate
+
+Published on 6 November 2026 from `16c31bf0ccbc46870e93b2949d94af037231fd1e` in [GitHub run 42215882461](https://github.com/klustr-io/postgres/actions/runs/42215882461). All seven Linux AMD64 images use `sha-16c31bf0ccbc46870e93b2949d94af037231fd1e`. Independent anonymous manifest/config checks matched every digest, source label, platform and non-root user to the checksum-verified publication receipt.
+
+Native OAuth/JWT/opaque introspection, secret rotation, packaged extensions and idle-safe statement telemetry passed. The image gate ran PostgreSQL regressions, the focused DOCB migration checks and three recovery-protocol tests. All seven security scans passed with zero critical/high matches; medium, low and unknown findings remain. See the [complete scan reports and manifest](https://github.com/klustr-io/postgres/actions/runs/42215882461/artifacts/13502569166). The vulnerability database was updated at `2026-11-06T09:50:00.021603275Z`.
+
+| Component | Digest-pinned image |
+| --- | --- |
+| compute | `ghcr.io/klustr-io/neon-compute@sha256:fe37ae40fbfe2ce6af1f79d14444ccf7b7ebac3284bfd462467667c281dc334b` |
+| pageserver | `ghcr.io/klustr-io/neon-pageserver@sha256:b650eb21228ea9788ec020288bbaf6f0b87e222e621c10a7b3fb923a6d901922` |
+| safekeeper | `ghcr.io/klustr-io/neon-safekeeper@sha256:6e0b0e6c85b1f6bdcc29b376a4068897042f30995f3e3537af8ff3f961946d82` |
+| storage-controller | `ghcr.io/klustr-io/neon-storage-controller@sha256:4547f6a6df45db282d8c04a6945953ced21e108130a8d6bf153f98f1f0d0b592` |
+| storage-broker | `ghcr.io/klustr-io/neon-storage-broker@sha256:29572dc7b069d444fa5a68b95b7163118cb2ca7a99155ba2df6fb55beb8e8a5b` |
+| proxy | `ghcr.io/klustr-io/neon-proxy@sha256:09af04f39c6c44f33a14a6f60af539f92a3d6e854507670452f67491e457d257` |
+| tenant-controller | `ghcr.io/klustr-io/neon-tenant-controller@sha256:a0b292d1dc2d59a339a98011572cb8f7ac6c0558467fa7974ad6ac2ead4688cf` |
+
+Use this coordinated set for the combined DOCB, WAL/durability, identity, extension, security and recovery changes. Branch publication leaves named release channels unchanged. The release remains experimental with `production_qualified: false`; deployment restore and public-app availability require separate verification after upgrading. Earlier entries below retain their historical source/publication context.
+
+Includes the WAL receiver recovery repair: IDENTIFY_SYSTEM accepts row metadata
+before its data row and rejects missing, duplicate, malformed-width or invalid-LSN
+rows. Compute timeline and lease readers also skip metadata instead of treating
+message zero as data. Three wire-protocol tests cover valid metadata/data,
+metadata without a row and an invalid WAL frontier, and run in the image gate.
+The previous client upgrade exposed this availability regression; a successful
+build alone does not prove that an affected deployment has restored or recovered.
 
 DOCB 0.2 makes DOCB storage the default behind the existing JSONB SQL type.
 `docb.jsonb_storage` selects the connection/database default; a table's
@@ -20,9 +44,9 @@ checks and do not use SECURITY DEFINER. They require rewrite disk/WAL headroom.
 
 The legacy DOCB type remains available. Logical slots still select full-value
 writes. Historical branches/backups retain their original format, and a reverse
-migration is not a stock-PostgreSQL physical downgrade certification. This is a
-source candidate requiring rebuilt engine/storage images, not part of the
-published security image tag. Existing performance figures are unchanged.
+migration is not a stock-PostgreSQL physical downgrade certification. The
+coordinated candidate above includes this storage support; the earlier November 5
+security image tag does not include DOCB 0.2. Existing performance figures are unchanged.
 Benchmark controls explicitly select standard JSONB so the new default does not
 silently change the meaning of their native/document/quorum comparisons.
 Validation: the engine and extension compiled; ten focused checks passed for
@@ -39,6 +63,9 @@ SDK package acquisition retains the same dated, signed Debian indexes but
 prefetches exact package files from Debian's CDN, verifying size and SHA-256
 before offline APT installation. This avoids snapshot pool HTTP 504 stalls.
 Real package installation and rejection of correct-size corrupted bytes passed.
+Slim controller builds without curl use APT's built-in HTTPS downloader with the
+same authenticated SHA-256, size check and offline installation. Installing the
+pinned OpenSSL packages in the exact curl-free Node base passed locally.
 See [SQL migration and limitations](../DEPLOY.md#jsonb-storage-switching-and-sql-migration-experimental-source-candidate).
 
 # Security hardening, candidate build 7bb4ca0

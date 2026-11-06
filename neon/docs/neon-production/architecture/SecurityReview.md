@@ -8,6 +8,20 @@ All seven public AMD64 images use tag
 platforms were independently verified against the publication receipt.
 The earlier `sha-2779e4e1b3923bb38a522390ce82bb2506e2fbb7` images lack these fixes.
 
+## November 6 coordinated candidate
+
+The later `sha-16c31bf0ccbc46870e93b2949d94af037231fd1e` set carries these repairs
+together with DOCB 0.2 and the recovery-protocol fixes.
+[GitHub run 42215882461](https://github.com/klustr-io/postgres/actions/runs/42215882461)
+built and published all seven images. Native OAuth/introspection, idle-safe
+telemetry and fresh image scans passed; all images have zero critical/high matches.
+The medium/low/unknown image counts below are unchanged in the new scans.
+Independent anonymous checks matched every digest, revision, AMD64 platform and
+non-root user. [Current manifest and complete reports](https://github.com/klustr-io/postgres/actions/runs/42215882461/artifacts/13502569166).
+This updates publication evidence, not the scope of the November 5 source audit.
+The three recovery wire tests passed, but deployment restore and public-app
+availability remain separate checks. Production qualification remains false.
+
 ## Reproduced defects and repairs
 
 | Boundary | Finding | Repair |

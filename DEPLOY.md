@@ -7,10 +7,12 @@ Applications use normal PostgreSQL connections, SQL and JSONB.
 
 **Check release compatibility before installing.** Checked-in manifests still
 select earlier public images: RC5 runtime images and a later controller image.
-The native OAuth and introspection source update requires matching rebuilt
-compute, proxy and controller images; those capabilities are not added by changing
-YAML against the older pins. Local source/image checks are not production HA
-certification. See [release preparation](#release-and-image-selection) and
+Use the coordinated `sha-16c31bf0ccbc46870e93b2949d94af037231fd1e`
+candidate for native OAuth/introspection, DOCB 0.2 and recovery-protocol repairs.
+All seven images are public; their digest pins and successful build are recorded
+in the [release notes](neon/RELEASE-NOTES.md). Update runtime and controller pins
+together. The candidate has not completed production HA certification.
+See [release preparation](#release-and-image-selection) and
 [HA and replication](#ha-and-replication-options).
 
 ## Deployment map
@@ -37,8 +39,8 @@ the tenant controller/operator. Public image names, source build commands and
 publication workflows are in the [README](README.md), [build guide](neon/README.md)
 and [release notes](neon/RELEASE-NOTES.md).
 
-For the native OAuth source update, install the controller's locked development
-dependencies, then build with the native authentication check enabled:
+To build a new coordinated candidate locally, install the controller's locked
+development dependencies, then enable the native authentication check:
 
 ```sh
 npm ci --prefix neon/controller/tenant-compute --ignore-scripts --no-audit --no-fund
@@ -1208,8 +1210,9 @@ for JSONB by default. New inserts store a full base; subsequent eligible updates
 store compact deltas. Small values and unsuitable updates retain full values.
 No extension, schema change or application setting is needed for this default.
 Existing explicit database, role, session and table settings remain respected.
-This source change requires rebuilt compute and pageserver/WAL-redo images; the published
-`sha-7bb4ca0...` image set does not contain it.
+This is available in the coordinated `sha-16c31bf0ccbc46870e93b2949d94af037231fd1e`
+image set. Use matching compute and pageserver/WAL-redo engines. The earlier
+November 5 security image set does not include DOCB 0.2.
 
 Install the administrator commands in each database, or upgrade an existing
 DOCB installation, using an account allowed to manage extensions:
@@ -1338,11 +1341,12 @@ small disposable tmpfs database, without Kubernetes, S3 or retained test data.
 
 ### Legacy native DOCB type (experimental)
 
-The unpublished source build packages the native `docb` type and its engine
-storage support. Existing published images do not include it. Build compute and
-storage images from the same source receipt before evaluating it; this is an
-experimental format, not an RC qualification or an automatic table conversion.
-Existing JSONB columns and the PostgreSQL catalog version remain unchanged.
+The coordinated candidate packages the separate native `docb` type and its
+engine storage support. Ordinary JSONB uses DOCB mechanics by default as described
+above; the legacy type remains available for existing adopters. Use matching
+compute and storage images from the release receipt. This experimental format
+has not completed production qualification, and enabling the legacy extension
+does not convert existing columns. The PostgreSQL catalog version is unchanged.
 
 An administrator enables the packaged extension once in each selected database:
 

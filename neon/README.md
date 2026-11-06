@@ -28,6 +28,12 @@ in this checkout. GitHub builds and publication are described in the
 The [security review](docs/neon-production/architecture/SecurityReview.md) records
 source repairs, dependency findings, bounded stability checks and publication gates.
 
+DOCB 0.2 uses delta-backed physical storage by default for ordinary JSONB columns;
+applications keep their existing SQL types and operators. Administrator commands
+migrate a table or the current database to DOCB or back to standard JSONB storage.
+`EXPLAIN (VERBOSE)` gives policy-based hints for standard-storage opt-outs without
+scanning documents. See [activation, migration and limits](../DEPLOY.md#jsonb-storage-switching-and-sql-migration-experimental-source-candidate).
+
 Third-party extensions are compiled against the same PG18 headers from
 [`extensions.lock.json`](packaging/neon/extensions.lock.json): Anonymizer,
 DataSketches, pgvector, Apache-only TimescaleDB and `pg_textsearch` BM25.
@@ -47,10 +53,10 @@ a prebuilt dependency toolchain; application sources are still compiled.
 `NEON_BUILDX_BUILDER` selects a builder; `BUILD_JOBS` sets compilation parallelism.
 The local builder is reused when its ignored configuration is available.
 Build snapshots, logs, image archives and receipts live under ignored
-`build/monorepo-*/`. The latest validated build is `18.6-source.3`: all seven
-images and their archives pass basic execution/identity checks, with 231 PostgreSQL
-regressions, four protocol tests and 15 focused Node checks passing. See the
-[local build receipt](tests/reports/local/neon-source-build.json).
+`build/monorepo-*/`. Published candidate source revisions, validation and OCI
+tags are recorded in the [release notes](RELEASE-NOTES.md). Build receipts and
+logs are retained in the matching GitHub Actions artifacts; ignored local reports
+are not required to review or reproduce a public release.
 
 Keep the PostgreSQL 18.6 minor-release update, Neon source import, direct runtime
 fixes, and packaging/controller changes as separate review units. The publication branch and release tag keep these changes separate from the

@@ -18,14 +18,20 @@ Customer-owned [enterprise fleets and OIDC](DEPLOY.md#enterprise-fleets-and-oidc
 add namespace-scoped provisioning, short-lived database logins and zone placement.
 Source builds also package [Anonymizer, DataSketches, vectors, TimescaleDB and BM25](DEPLOY.md#packaged-postgresql-extensions),
 alongside PostgreSQL's built-in full-text search.
-Unpublished source also includes an opt-in native [`docb` document type](DEPLOY.md#native-docb-documents-experimental)
-with delta storage and selective projections; existing `jsonb` columns retain
-their current storage behavior. This requires matching rebuilt images.
+The DOCB 0.2 candidate uses delta-backed storage by default behind ordinary
+`jsonb` columns, preserving application SQL, indexes and driver type identity.
+[SQL migration commands](DEPLOY.md#jsonb-storage-switching-and-sql-migration-experimental-source-candidate)
+convert a table or database in either direction; standard JSONB storage remains
+an explicit opt-out. Existing rows are not rewritten on reads. The separate
+[`docb` type](DEPLOY.md#native-docb-documents-experimental) remains available.
 Read the [performance report](blog.md) for document benchmarks, selective reads
 and the tradeoffs between durable and asynchronous commit profiles.
-The source update also supports configurable [native PG18 OAuth login](DEPLOY.md#native-postgresql-18-oauth-login)
-through the proxy and an installed token validator. It requires matching rebuilt
-compute, proxy and controller images; the older RC5 digests do not include it.
+The coordinated candidate also supports configurable
+[native PG18 OAuth login](DEPLOY.md#native-postgresql-18-oauth-login)
+through the proxy and an installed token validator. Use matching compute, proxy
+and controller images; the older RC5 digests do not contain these changes.
+Recovery readers also accept PostgreSQL simple-query row metadata before data
+rows, including the pageserver IDENTIFY_SYSTEM path.
 
 ## Published images
 
@@ -51,15 +57,22 @@ registry digests. Version tags identify releases; `sha-<commit>` identifies sour
 `candidate` tracks release candidates; only a stable release updates `latest`.
 
 ```sh
-docker pull ghcr.io/klustr-io/neon-compute:18.6-rc.5
+docker pull ghcr.io/klustr-io/neon-compute:sha-16c31bf0ccbc46870e93b2949d94af037231fd1e
 ```
+
+All seven DOCB 0.2 candidate images use the same commit tag. The
+[coordinated build](https://github.com/klustr-io/postgres/actions/runs/42215882461)
+retains OCI archives, checksums, source receipts and qualification logs as workflow
+artifacts. This is a development candidate, not a stable release or production
+qualification. Earlier tags do not acquire new behavior when a candidate is built.
 
 GitHub creates new GHCR packages private initially. An organization administrator
 must set each package's visibility to Public once to enable anonymous registry
 pulls. See [GitHub's package visibility rules](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility).
 The release manifest records verification at publication time; package visibility
 can change afterward. Public release
-archives provide an independent download path:
+archives provide an independent download path. The example below downloads the
+older RC5 release, which does not include DOCB 0.2:
 
 ```sh
 base=https://github.com/klustr-io/postgres/releases/download/neon-v18.6-rc.5
@@ -90,7 +103,7 @@ The engine source is in `src/` and `contrib/`; Neon runtime source is in
 source patches. Build, deployment and test support lives under `neon/`.
 
 Pull requests run focused checks without publishing. Pushes to `REL_18_STABLE_neon`
-and `main` build and publish commit-tagged images. A tag such as
+and `main`, plus `release/**` branches, build and publish commit-tagged images. A tag such as
 `neon-v18.6-rc.4` also creates a GitHub prerelease with public OCI assets and notes.
 Manual runs build without publishing unless the publishing input is selected.
 GitHub's manual-dispatch UI requires the workflow on the repository's default
@@ -116,7 +129,9 @@ image built from this checkout; see the deployment guide for build/install comma
 This RC is ready for integration and review. Production HA/fencing/recovery and
 near-native performance qualification remain open; see the
 [release notes](neon/RELEASE-NOTES.md) for measured limits. The images are not a
-production HA storage operator. JSONB delta storage is not implemented.
+production HA storage operator. DOCB storage and reversible migrations require
+matching engines; migration uses exclusive maintenance locks and rewrite space.
+Historical branches and backups retain their original format.
 
 ## PostgreSQL documentation and licenses
 
