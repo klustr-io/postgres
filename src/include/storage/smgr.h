@@ -165,6 +165,7 @@ extern PGDLLIMPORT dbsize_hook_type dbsize_hook;
 extern PGDLLIMPORT const PgAioTargetInfo aio_smgr_target_info;
 
 extern SmgrId smgrregister(const f_smgr *smgr);
+extern bool smgr_uses_custom_storage(void);
 
 extern void smgrinit(void);
 extern SMgrRelation smgropen(RelFileLocator rlocator, ProcNumber backend,

@@ -58,7 +58,7 @@ SELECT COUNT(*) >= 1 AS ok FROM pg_get_wal_block_info(:'wal_lsn1', :'wal_lsn2');
 SELECT oid AS sample_tbl_oid FROM pg_class WHERE relname = 'sample_tbl' \gset
 
 SELECT COUNT(*) >= 1 AS ok FROM pg_get_wal_records_info(:'wal_lsn1', :'wal_lsn2')
-			WHERE block_ref LIKE concat('%', :'sample_tbl_oid', '%') AND resource_manager = 'Heap';
+			WHERE block_ref LIKE concat('%', :'sample_tbl_oid', '%') AND resource_manager = 'neon';
 
 -- ===================================================================
 -- Test for filtering out WAL records based on resource_manager and
@@ -66,7 +66,7 @@ SELECT COUNT(*) >= 1 AS ok FROM pg_get_wal_records_info(:'wal_lsn1', :'wal_lsn2'
 -- ===================================================================
 
 SELECT COUNT(*) >= 1 AS ok FROM pg_get_wal_records_info(:'wal_lsn1', :'wal_lsn2')
-			WHERE resource_manager = 'Heap' AND record_type = 'INSERT';
+			WHERE resource_manager = 'neon' AND record_type = 'INSERT';
 
 -- ===================================================================
 -- Tests to get block information from WAL record

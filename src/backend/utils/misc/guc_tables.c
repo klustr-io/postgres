@@ -73,6 +73,7 @@
 #include "postmaster/syslogger.h"
 #include "postmaster/walsummarizer.h"
 #include "postmaster/walwriter.h"
+#include "replication/logical.h"
 #include "replication/logicallauncher.h"
 #include "replication/slot.h"
 #include "replication/slotsync.h"
@@ -94,6 +95,7 @@
 #include "tsearch/ts_cache.h"
 #include "utils/builtins.h"
 #include "utils/bytea.h"
+#include "utils/docb.h"
 #include "utils/float.h"
 #include "utils/guc_hooks.h"
 #include "utils/guc_tables.h"
@@ -456,6 +458,12 @@ static const struct config_enum_entry shared_memory_options[] = {
 #ifdef WIN32
 	{"windows", SHMEM_TYPE_WINDOWS, false},
 #endif
+	{NULL, 0, false}
+};
+
+static const struct config_enum_entry docb_jsonb_storage_options[] = {
+	{"jsonb", DOCB_STORAGE_JSONB, false},
+	{"docb", DOCB_STORAGE_DOCB, false},
 	{NULL, 0, false}
 };
 
@@ -5050,6 +5058,18 @@ struct config_string ConfigureNamesString[] =
 	},
 
 	{
+		{"output_plugin_libraries", PGC_SUSET, REPLICATION_SENDING,
+			gettext_noop("Lists libraries that may be named as logical decoding output plugins."),
+			gettext_noop("Users with REPLICATION privileges may only use plugins in this list when creating logical replication slots."),
+			/* note: src/bin/pg_upgrade/check.c assumes GUC_LIST_QUOTE here */
+			GUC_LIST_INPUT | GUC_LIST_QUOTE | GUC_SUPERUSER_ONLY
+		},
+		&output_plugin_libraries_string,
+		"pgoutput, test_decoding",
+		NULL, NULL, NULL
+	},
+
+	{
 		{"log_connections", PGC_SU_BACKEND, LOGGING_WHAT,
 			gettext_noop("Logs specified aspects of connection establishment and setup."),
 			NULL,
@@ -5131,6 +5151,17 @@ struct config_enum ConfigureNamesEnum[] =
 		&default_toast_compression,
 		TOAST_PGLZ_COMPRESSION,
 		default_toast_compression_options,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"docb.jsonb_storage", PGC_USERSET, CLIENT_CONN_STATEMENT,
+			gettext_noop("Selects the default physical storage for JSONB columns."),
+			gettext_noop("Existing values remain readable; table policies override this default.")
+		},
+		&docb_jsonb_storage,
+		DOCB_STORAGE_DOCB,
+		docb_jsonb_storage_options,
 		NULL, NULL, NULL
 	},
 

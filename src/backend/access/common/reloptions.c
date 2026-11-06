@@ -31,6 +31,7 @@
 #include "utils/array.h"
 #include "utils/attoptcache.h"
 #include "utils/builtins.h"
+#include "utils/docb.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
@@ -516,8 +517,27 @@ static relopt_enum_elt_def viewCheckOptValues[] =
 	{(const char *) NULL}		/* list terminator */
 };
 
+static relopt_enum_elt_def jsonbStorageValues[] =
+{
+	{"inherit", DOCB_STORAGE_INHERIT},
+	{"jsonb", DOCB_STORAGE_JSONB},
+	{"docb", DOCB_STORAGE_DOCB},
+	{(const char *) NULL}
+};
+
 static relopt_enum enumRelOpts[] =
 {
+	{
+		{
+			"jsonb_storage",
+			"Selects ordinary or delta-backed storage for JSONB columns",
+			RELOPT_KIND_HEAP,
+			AccessExclusiveLock
+		},
+		jsonbStorageValues,
+		DOCB_STORAGE_INHERIT,
+		gettext_noop("Valid values are \"jsonb\", \"docb\", and \"inherit\".")
+	},
 	{
 		{
 			"vacuum_index_cleanup",
@@ -1898,6 +1918,8 @@ default_reloptions(Datum reloptions, bool validate, relopt_kind kind)
 		offsetof(StdRdOptions, autovacuum) + offsetof(AutoVacOpts, log_min_duration)},
 		{"toast_tuple_target", RELOPT_TYPE_INT,
 		offsetof(StdRdOptions, toast_tuple_target)},
+		{"jsonb_storage", RELOPT_TYPE_ENUM,
+		offsetof(StdRdOptions, jsonb_storage)},
 		{"autovacuum_vacuum_cost_delay", RELOPT_TYPE_REAL,
 		offsetof(StdRdOptions, autovacuum) + offsetof(AutoVacOpts, vacuum_cost_delay)},
 		{"autovacuum_vacuum_scale_factor", RELOPT_TYPE_REAL,

@@ -1,0 +1,66 @@
+# Deployment source: neon/packaging/deploy/render.mjs
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: neon
+resources:
+  - ../base
+  - database-crd.yaml
+  - backup-crd.yaml
+  - fleet-crd.yaml
+  - fleet.yaml
+  - rbac.yaml
+  - trigger-authentication.yaml
+  - network-policy.yaml
+patches:
+  - path: controller-patch.yaml
+  - path: service-patch.yaml
+  - path: init-patch.yaml
+  - path: provision-patch.yaml
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: metadata
+    patch: '[{"op":"remove","path":"/spec/replicas"},{"op":"add","path":"/spec/template/metadata/labels/neon.klustr.io~1storage-fleet","value":"storage"}]'
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: storage-broker
+    patch: '[{"op":"remove","path":"/spec/replicas"},{"op":"add","path":"/spec/template/metadata/labels/neon.klustr.io~1storage-fleet","value":"storage"}]'
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: storage-controller
+    patch: '[{"op":"remove","path":"/spec/replicas"},{"op":"add","path":"/spec/template/metadata/labels/neon.klustr.io~1storage-fleet","value":"storage"}]'
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: pageserver
+    patch: '[{"op":"remove","path":"/spec/replicas"},{"op":"add","path":"/spec/template/metadata/labels/neon.klustr.io~1storage-fleet","value":"storage"}]'
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: pageserver-2
+    patch: '[{"op":"remove","path":"/spec/replicas"},{"op":"add","path":"/spec/template/metadata/labels/neon.klustr.io~1storage-fleet","value":"storage"}]'
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: safekeeper-1
+    patch: '[{"op":"remove","path":"/spec/replicas"},{"op":"add","path":"/spec/template/metadata/labels/neon.klustr.io~1storage-fleet","value":"storage"}]'
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: safekeeper-2
+    patch: '[{"op":"remove","path":"/spec/replicas"},{"op":"add","path":"/spec/template/metadata/labels/neon.klustr.io~1storage-fleet","value":"storage"}]'
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: safekeeper-3
+    patch: '[{"op":"remove","path":"/spec/replicas"},{"op":"add","path":"/spec/template/metadata/labels/neon.klustr.io~1storage-fleet","value":"storage"}]'

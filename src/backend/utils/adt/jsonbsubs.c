@@ -21,11 +21,13 @@
 #include "parser/parse_expr.h"
 #include "utils/builtins.h"
 #include "utils/jsonb.h"
+#include "utils/docb.h"
 
 
 /* SubscriptingRefState.workspace for jsonb subscripting execution */
 typedef struct JsonbSubWorkspace
 {
+	bool		isDocb;
 	bool		expectArray;	/* jsonb root is expected to be an array */
 	Oid		   *indexOid;		/* OID of coerced subscript expression, could
 								 * be only integer or text */
@@ -157,7 +159,7 @@ jsonb_subscript_transform(SubscriptingRef *sbsref,
 	sbsref->reflowerindexpr = NIL;
 
 	/* Determine the result type of the subscripting operation; always jsonb */
-	sbsref->refrestype = JSONBOID;
+	sbsref->refrestype = docb_is_type(sbsref->refcontainertype) ? sbsref->refcontainertype : JSONBOID;
 	sbsref->reftypmod = -1;
 }
 
@@ -242,6 +244,12 @@ jsonb_subscript_fetch(ExprState *state,
 
 	/* Should not get here if source jsonb (or any subscript) is null */
 	Assert(!(*op->resnull));
+	if (workspace->isDocb || docb_is_delta_value(*op->resvalue))
+	{
+		*op->resvalue = docb_get_element(*op->resvalue, workspace->index,
+			sbsrefstate->numupper, op->resnull);
+		return;
+	}
 
 	jsonbSource = DatumGetJsonbP(*op->resvalue);
 	*op->resvalue = jsonb_get_element(jsonbSource,
@@ -363,6 +371,7 @@ jsonb_exec_setup(const SubscriptingRef *sbsref,
 	workspace = palloc0(MAXALIGN(sizeof(JsonbSubWorkspace)) +
 						nupper * (sizeof(Datum) + sizeof(Oid)));
 	workspace->expectArray = false;
+	workspace->isDocb = docb_is_type(sbsref->refcontainertype);
 	ptr = ((char *) workspace) + MAXALIGN(sizeof(JsonbSubWorkspace));
 
 	/*

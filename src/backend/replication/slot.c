@@ -54,6 +54,7 @@
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/proc.h"
+#include "storage/smgr.h"
 #include "storage/procarray.h"
 #include "utils/builtins.h"
 #include "utils/guc_hooks.h"
@@ -738,44 +739,46 @@ ReplicationSlotRelease(void)
 		 */
 		ReplicationSlotDropAcquired();
 	}
-
-	/*
-	 * If slot needed to temporarily restrain both data and catalog xmin to
-	 * create the catalog snapshot, remove that temporary constraint.
-	 * Snapshots can only be exported while the initial snapshot is still
-	 * acquired.
-	 */
-	if (!TransactionIdIsValid(slot->data.xmin) &&
-		TransactionIdIsValid(slot->effective_xmin))
-	{
-		SpinLockAcquire(&slot->mutex);
-		slot->effective_xmin = InvalidTransactionId;
-		SpinLockRelease(&slot->mutex);
-		ReplicationSlotsComputeRequiredXmin(false);
-	}
-
-	/*
-	 * Set the time since the slot has become inactive. We get the current
-	 * time beforehand to avoid system call while holding the spinlock.
-	 */
-	now = GetCurrentTimestamp();
-
-	if (slot->data.persistency == RS_PERSISTENT)
+	else
 	{
 		/*
-		 * Mark persistent slot inactive.  We're not freeing it, just
-		 * disconnecting, but wake up others that may be waiting for it.
+		 * If slot needed to temporarily restrain both data and catalog xmin
+		 * to create the catalog snapshot, remove that temporary constraint.
+		 * Snapshots can only be exported while the initial snapshot is still
+		 * acquired.
 		 */
-		SpinLockAcquire(&slot->mutex);
-		slot->active_pid = 0;
-		ReplicationSlotSetInactiveSince(slot, now, false);
-		SpinLockRelease(&slot->mutex);
-		ConditionVariableBroadcast(&slot->active_cv);
-	}
-	else
-		ReplicationSlotSetInactiveSince(slot, now, true);
+		if (!TransactionIdIsValid(slot->data.xmin) &&
+			TransactionIdIsValid(slot->effective_xmin))
+		{
+			SpinLockAcquire(&slot->mutex);
+			slot->effective_xmin = InvalidTransactionId;
+			SpinLockRelease(&slot->mutex);
+			ReplicationSlotsComputeRequiredXmin(false);
+		}
 
-	MyReplicationSlot = NULL;
+		/*
+		 * Set the time since the slot has become inactive. We get the current
+		 * time beforehand to avoid system call while holding the spinlock.
+		 */
+		now = GetCurrentTimestamp();
+
+		if (slot->data.persistency == RS_PERSISTENT)
+		{
+			/*
+			 * Mark persistent slot inactive.  We're not freeing it, just
+			 * disconnecting, but wake up others that may be waiting for it.
+			 */
+			SpinLockAcquire(&slot->mutex);
+			slot->active_pid = 0;
+			ReplicationSlotSetInactiveSince(slot, now, false);
+			SpinLockRelease(&slot->mutex);
+			ConditionVariableBroadcast(&slot->active_cv);
+		}
+		else
+			ReplicationSlotSetInactiveSince(slot, now, true);
+
+		MyReplicationSlot = NULL;
+	}
 
 	/* might not have been set when we've been a plain slot */
 	LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
@@ -990,7 +993,7 @@ ReplicationSlotDropPtr(ReplicationSlot *slot)
 	sprintf(path, "%s/%s", PG_REPLSLOT_DIR, NameStr(slot->data.name));
 	sprintf(tmppath, "%s/%s.tmp", PG_REPLSLOT_DIR, NameStr(slot->data.name));
 
-	if (SlotIsLogical(slot) && XLogInsertAllowed())
+	if (smgr_uses_custom_storage() && SlotIsLogical(slot) && XLogInsertAllowed())
 	{
 		/* NEON specific: delete slot from storage using logical message */
 		char		prefix[MAXPGPATH + sizeof("neon-file:") + sizeof("/state")];
@@ -2388,7 +2391,8 @@ SaveSlotToPath(ReplicationSlot *slot, const char *dir, int elevel)
 				ReplicationSlotOnDiskChecksummedSize);
 	FIN_CRC32C(cp.checksum);
 
-	if (SlotIsLogical(slot) && XLogInsertAllowed() && cp.slotdata.restart_lsn != InvalidXLogRecPtr)
+	if (smgr_uses_custom_storage() && SlotIsLogical(slot) &&
+		XLogInsertAllowed() && cp.slotdata.restart_lsn != InvalidXLogRecPtr)
 	{
 		/* NEON specific: persist slot in storage using logical message */
 		char		prefix[MAXPGPATH + sizeof("neon-file:")];

@@ -1,0 +1,27 @@
+{
+  "name": "klustr-neon-tenant-compute-controller",
+  "version": "0.1.0-rc.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.19.0 <25"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "1.14.7",
+    "@grpc/proto-loader": "0.8.1",
+    "pg": "8.23.1",
+    "yaml": "2.8.3"
+  },
+  "scripts": {
+    "start": "node src/composition/ControllerInit.mjs",
+    "lint": "node ../../dev/quality/controller-check.mjs",
+    "architecture": "node ../../dev/quality/ArchitectureCheck.mjs",
+    "test": "cd ../../.. && node --test neon/tests/neon/unit/*.test.mjs"
+  },
+  "overrides": {
+    "minimatch": "11.0.1"
+  },
+  "devDependencies": {
+    "eslint": "10.14.0"
+  }
+}

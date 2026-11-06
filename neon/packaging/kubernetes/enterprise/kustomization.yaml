@@ -1,0 +1,6 @@
+# Deployment source: neon/packaging/deploy/render.mjs
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: neon
+resources:
+  - operator.yaml

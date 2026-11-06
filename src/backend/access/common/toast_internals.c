@@ -12,6 +12,7 @@
  */
 
 #include "postgres.h"
+#include "utils/docb.h"
 
 #include "access/detoast.h"
 #include "access/genam.h"
@@ -383,6 +384,16 @@ toast_save_datum(Relation rel, Datum value,
  */
 void
 toast_delete_datum(Relation rel, Datum value, bool is_speculative)
+{
+	if (!VARATT_IS_EXTERNAL_ONDISK(DatumGetPointer(value)))
+		return;
+	docb_delete_dependencies(rel, value, is_speculative);
+	toast_delete_datum_only(rel, value, is_speculative);
+}
+
+/* DOCB root replacement can retire metadata while retaining its owned base. */
+void
+toast_delete_datum_only(Relation rel, Datum value, bool is_speculative)
 {
 	struct varlena *attr = (struct varlena *) DatumGetPointer(value);
 	struct varatt_external toast_pointer;

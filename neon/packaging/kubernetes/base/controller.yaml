@@ -1,0 +1,375 @@
+# Deployment source: neon/packaging/deploy/render.mjs
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: neon-tenant-controller
+      namespace: neon
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    metadata:
+      name: neon-tenant-controller
+      namespace: neon
+    rules:
+      - apiGroups:
+          - ""
+        resources:
+          - configmaps
+        verbs:
+          - get
+          - list
+          - patch
+      - apiGroups:
+          - ""
+        resources:
+          - secrets
+          - services
+        verbs:
+          - get
+          - create
+          - patch
+      - apiGroups:
+          - ""
+        resources:
+          - pods
+        verbs:
+          - get
+          - list
+      - apiGroups:
+          - apps
+        resources:
+          - deployments
+        verbs:
+          - get
+          - create
+          - patch
+      - apiGroups:
+          - coordination.k8s.io
+        resources:
+          - leases
+        verbs:
+          - get
+          - create
+          - patch
+      - apiGroups:
+          - discovery.k8s.io
+        resources:
+          - endpointslices
+        verbs:
+          - get
+          - list
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: neon-tenant-controller
+      namespace: neon
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: Role
+      name: neon-tenant-controller
+    subjects:
+      - kind: ServiceAccount
+        name: neon-tenant-controller
+        namespace: neon
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: neon-tenant-controller
+      namespace: neon
+    spec:
+      replicas: 1
+      strategy:
+        type: Recreate
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: neon-tenant-controller
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: neon-tenant-controller
+        spec:
+          serviceAccountName: neon-tenant-controller
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          terminationGracePeriodSeconds: 20
+          containers:
+            - name: controller
+              image: ghcr.io/klustr-io/neon-tenant-controller@sha256:98fd4dde0fff823387022a81d58d593d67df9a4c463649a4cda9d8371afb5fdb
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: POD_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+                - name: POD_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
+                - name: NEON_DEPLOYMENT_CONFIG
+                  value: /etc/neon/cluster.yaml
+              ports:
+                - name: api
+                  containerPort: 8080
+                - name: health
+                  containerPort: 9090
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              readinessProbe:
+                httpGet:
+                  path: /readyz
+                  port: 9090
+                periodSeconds: 1
+              livenessProbe:
+                httpGet:
+                  path: /livez
+                  port: 9090
+                periodSeconds: 10
+              volumeMounts:
+                - name: tls
+                  mountPath: /run/controller-tls
+                  readOnly: true
+                - name: trust
+                  mountPath: /run/trust
+                  readOnly: true
+                - name: auth
+                  mountPath: /run/controller-auth
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+                - name: config
+                  mountPath: /etc/neon
+                  readOnly: true
+          volumes:
+            - name: tls
+              secret:
+                secretName: neon-controller-tls
+                defaultMode: 288
+            - name: trust
+              secret:
+                secretName: neon-service-ca
+                defaultMode: 292
+            - name: auth
+              secret:
+                secretName: neon-controller-auth
+                defaultMode: 288
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi
+            - name: config
+              configMap:
+                name: neon-cluster
+          nodeSelector:
+            kubernetes.io/arch: amd64
+            kubernetes.io/os: linux
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: neon-proxy
+      namespace: neon
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: neon-proxy
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: neon-proxy
+        spec:
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          terminationGracePeriodSeconds: 60
+          containers:
+            - name: proxy
+              image: ghcr.io/klustr-io/neon-proxy@sha256:034e918af3ca73bb939fdb6d8b4b6c73dce35dcd433f048a35aca9b217194e24
+              imagePullPolicy: IfNotPresent
+              args:
+                - --proxy
+                - 0.0.0.0:5432
+                - --auth-backend
+                - control-plane
+                - --auth-endpoint
+                - https://neon-controller:8080/
+                - --http
+                - 0.0.0.0:7001
+                - --tls-key
+                - /run/proxy-tls/tls.key
+                - --tls-cert
+                - /run/proxy-tls/tls.crt
+                - --wake-compute-cache
+                - size=0
+              env:
+                - name: NEON_PROXY_TO_CONTROLPLANE_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: neon-controller-auth
+                      key: token
+                - name: SSL_CERT_FILE
+                  value: /run/trust/ca.crt
+                - name: OTEL_SDK_DISABLED
+                  value: "true"
+              ports:
+                - name: postgres
+                  containerPort: 5432
+                - name: metrics
+                  containerPort: 7001
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: "2"
+                  memory: 512Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              readinessProbe:
+                httpGet:
+                  path: /v1/status
+                  port: 7001
+                periodSeconds: 1
+              volumeMounts:
+                - name: tls
+                  mountPath: /run/proxy-tls
+                  readOnly: true
+                - name: ca
+                  mountPath: /run/trust
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tls
+              secret:
+                secretName: neon-proxy-tls
+                defaultMode: 288
+            - name: ca
+              secret:
+                secretName: neon-service-ca
+                defaultMode: 292
+            - name: tmp
+              emptyDir:
+                sizeLimit: 128Mi
+          nodeSelector:
+            kubernetes.io/arch: amd64
+            kubernetes.io/os: linux
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: neon-controller
+      namespace: neon
+    spec:
+      type: ClusterIP
+      selector:
+        app.kubernetes.io/name: neon-tenant-controller
+      ports:
+        - port: 8080
+          targetPort: 8080
+          name: api
+        - name: hooks
+          port: 9090
+          targetPort: 9090
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: neon-proxy
+      namespace: neon
+    spec:
+      type: ClusterIP
+      selector:
+        app.kubernetes.io/name: neon-proxy
+      ports:
+        - port: 5432
+          targetPort: 5432
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: neon-controller-ingress
+      namespace: neon
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: neon-tenant-controller
+      policyTypes:
+        - Ingress
+      ingress:
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: neon-proxy
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: neon-compute
+          ports:
+            - protocol: TCP
+              port: 8080
+        - from:
+            - podSelector:
+                matchLabels:
+                  app: storage-controller
+          ports:
+            - protocol: TCP
+              port: 9090
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: neon-compute-ingress
+      namespace: neon
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: neon-compute
+      policyTypes:
+        - Ingress
+      ingress:
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: neon-proxy
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: neon-tenant-controller
+          ports:
+            - protocol: TCP
+              port: 5432
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: neon-proxy-ingress
+      namespace: neon
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: neon-proxy
+      policyTypes:
+        - Ingress
+      ingress:
+        - ports:
+            - protocol: TCP
+              port: 5432

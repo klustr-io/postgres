@@ -103,6 +103,13 @@ static const f_smgr *smgrsw = &smgr_md;
 
 static int NSmgr = 1;
 
+/* True when an extension registered storage beyond the built-in md manager. */
+bool
+smgr_uses_custom_storage(void)
+{
+	return NSmgr > 1;
+}
+
 start_unlogged_build_hook_type start_unlogged_build_hook;
 finish_unlogged_build_phase_1_hook_type finish_unlogged_build_phase_1_hook;
 end_unlogged_build_hook_type end_unlogged_build_hook;
@@ -150,7 +157,7 @@ smgrregister(const f_smgr *smgr)
 			continue;
 
 		/* exactly the same struct, return the previously-returned ID */
-		if (memcmp(smgr, &smgrsw[i], sizeof(f_smgr)))
+		if (memcmp(smgr, &smgrsw[i], sizeof(f_smgr)) == 0)
 			return i;
 
 		/* different contents on same name, error out*/

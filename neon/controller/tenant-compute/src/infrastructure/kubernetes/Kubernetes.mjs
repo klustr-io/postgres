@@ -1,0 +1,259 @@
+import https from 'node:https';
+import fs from 'node:fs';
+import {randomUUID} from 'node:crypto';
+
+/**
+ * @typedef {Object} KubernetesMetadata
+ * @property {string} [name] - Namespace resource name; absent on collection metadata.
+ * @property {string} [namespace] - Provider namespace for a namespaced object.
+ * @property {string} [uid] - Immutable object identity assigned by Kubernetes.
+ * @property {string} [resourceVersion] - Provider concurrency/watch cursor.
+ * @property {number} [generation] - Desired object generation.
+ * @property {Record<string, string>} [labels] - Selection and ownership labels.
+ * @property {Record<string, string>} [annotations] - Provider-owned controller annotations.
+ * @property {string[]} [finalizers] - Retention and cleanup guards.
+ * @property {string} [deletionTimestamp] - Provider retirement timestamp.
+ * @property {string} [creationTimestamp] - Provider creation timestamp.
+ * @property {string} [continue] - Opaque pagination cursor on list responses.
+ */
+/**
+ * @typedef {Object} KubernetesResource
+ * @property {string} [apiVersion] - Kubernetes resource API/version.
+ * @property {string} [kind] - Kubernetes object or collection kind.
+ * @property {KubernetesMetadata} metadata - Identity, concurrency and collection metadata.
+ * @property {Record<string, unknown>} [spec] - Kind-specific desired document, interpreted by its owning adapter.
+ * @property {Record<string, unknown>} [status] - Kind-specific observed document, not desired-state authority.
+ * @property {Record<string, string>} [data] - ConfigMap strings or base64-encoded Secret fields.
+ * @property {KubernetesResource[]} [items] - Collection resources returned by list queries.
+ */
+/**
+ * @typedef {Object} KubernetesDependencies
+ * @property {string} namespace - Fixed namespace for namespaced request paths.
+ * @property {string} [host] - API host, defaulting to the in-cluster service host.
+ * @property {string | number} [port] - API HTTPS port, defaulting to the in-cluster service port.
+ * @property {string} [account] - Projected service-account directory containing ca.crt and token.
+ */
+/**
+ * @typedef {Object} KubernetesWatchEvent
+ * @property {'ADDED' | 'MODIFIED' | 'DELETED' | 'ERROR' | 'BOOKMARK'} type - Provider event category.
+ * @property {KubernetesResource} object - Resource snapshot or provider status document.
+ */
+/** @typedef {() => number} MonotonicClock */
+/**
+ * @typedef {Object} LeadershipOptions
+ * @property {string} podName - Host identity combined with a unique process reservation.
+ * @property {number} [duration] - Lease interval in seconds, default 15.
+ * @property {MonotonicClock} [clock] - Monotonic milliseconds for local lease validity and takeover observation.
+ * @property {string} [leaseName] - Namespace lease resource, default neon-tenant-controller.
+ */
+
+/** Kubernetes status rejection without exposing credentials or provider response bodies. */
+export class ApiError extends Error {
+  /** @param {number} status - Rejected provider HTTP status code. */
+  constructor(status){super(`Kubernetes API returned ${status}`);this.status=status;this.code='KUBERNETES_API';}
+}
+/** Namespace-bound HTTPS Kubernetes adapter with projected credential rotation and bounded responses. */
+export class Kubernetes {
+  /** @param {KubernetesDependencies} dependencies - Fixed API identity and projected credentials selected by composition. */
+  constructor({namespace,host=process.env.KUBERNETES_SERVICE_HOST,port=process.env.KUBERNETES_SERVICE_PORT_HTTPS||443,
+    account='/var/run/secrets/kubernetes.io/serviceaccount'}){
+    if(!/^[a-z0-9][a-z0-9-]{0,62}$/.test(namespace))throw Error('Invalid namespace');
+    this.namespace=namespace;this.host=host;this.port=port;this.account=account;
+    this.agent=new https.Agent({keepAlive:true,maxSockets:32,ca:fs.readFileSync(account+'/ca.crt'),rejectUnauthorized:true});
+  }
+  /**
+   * Execute a provider request without interpreting domain policy.
+   * Requires service-account RBAC permission and caller command authorization; side effects perform the requested API operation with fresh projected credentials.
+   * @param {string} method - HTTP method selected by the owning provider adapter.
+   * @param {string} url - Fixed API-relative resource path, including any subresource/query.
+   * @param {unknown} [body] - Serializable provider document, absent for bodyless reads.
+   * @param {string} [contentType] - Explicit patch/media type; JSON and merge-patch defaults are selected otherwise.
+   * @returns {Promise<KubernetesResource | null>} Decoded provider document or an empty successful response.
+   * @throws {Error} On RBAC rejection, timeout, transport failure, response limits or malformed JSON.
+   */
+  async request(method,url,body,contentType){
+    const data=body===undefined?null:Buffer.from(JSON.stringify(body));
+    // Read projected credentials per request to honor Kubernetes token rotation.
+    const token=fs.readFileSync(this.account+'/token','utf8').trim();
+    return await new Promise((resolve,reject)=>{
+      const request=https.request({host:this.host,port:this.port,path:url,method,agent:this.agent,
+        headers:{Authorization:'Bearer '+token,Accept:'application/json',
+          ...(data?{'Content-Type':contentType||(method==='PATCH'?'application/merge-patch+json':'application/json'),'Content-Length':data.length}:{})}},response=>{
+        const chunks=[];let size=0;
+        response.on('data',chunk=>{size+=chunk.length;if(size>8*1024*1024)response.destroy(Error('API response limit'));else chunks.push(chunk);});
+        response.on('error',reject);
+        response.on('end',()=>{
+          if(response.statusCode<200||response.statusCode>=300)return reject(new ApiError(response.statusCode));
+          try{resolve(size?JSON.parse(Buffer.concat(chunks).toString()):null);}catch{reject(Error('Invalid Kubernetes JSON'));}
+        });
+      });
+      request.setTimeout(15000,()=>request.destroy(Error('Kubernetes API timeout')));
+      request.on('error',reject);if(data)request.write(data);request.end();
+    });
+  }
+  /**
+   * Resolve a supported namespaced API path without side effects.
+   * This formatter grants no authorization; service-account RBAC is enforced by request.
+   * @param {string} kind - Supported lowercase Kubernetes collection name.
+   * @param {string} [name] - Optional validated namespace resource name.
+   * @returns {string} API-relative collection or named resource path.
+   * @throws {Error} On unsupported collections or unsafe resource names.
+   */
+  path(kind,name=''){
+    const prefixes={configmaps:'/api/v1',secrets:'/api/v1',services:'/api/v1',pods:'/api/v1',
+      deployments:'/apis/apps/v1',statefulsets:'/apis/apps/v1',jobs:'/apis/batch/v1',serviceaccounts:'/api/v1',roles:'/apis/rbac.authorization.k8s.io/v1',rolebindings:'/apis/rbac.authorization.k8s.io/v1',networkpolicies:'/apis/networking.k8s.io/v1',leases:'/apis/coordination.k8s.io/v1',endpointslices:'/apis/discovery.k8s.io/v1',
+      neondatabases:'/apis/neon.klustr.io/v1alpha1',neonfleets:'/apis/neon.klustr.io/v1alpha1',neonbackups:'/apis/neon.klustr.io/v1alpha1',neonstoragefleets:'/apis/neon.klustr.io/v1alpha1',scaledobjects:'/apis/keda.sh/v1alpha1',triggerauthentications:'/apis/keda.sh/v1alpha1'};
+    if(!prefixes[kind]||name&&!/^[a-z0-9][a-z0-9.-]{0,252}$/.test(name))throw Error('Invalid resource path');
+    return `${prefixes[kind]}/namespaces/${this.namespace}/${kind}${name?'/'+name:''}`;
+  }
+  /**
+   * Read a named provider resource under service-account read permission.
+   * Side effects perform one API read; domain authorization remains with the caller.
+   * @param {string} kind - Supported collection.
+   * @param {string} name - Resource name.
+   * @returns {Promise<KubernetesResource>} Decoded named resource.
+   * @throws {Error} On missing resources, provider rejection or transport failure.
+   */
+  get(kind,name){return this.request('GET',this.path(kind,name));}
+  /**
+   * Create a provider resource under service-account create permission.
+   * Requires prior command authorization; side effects persist exactly the supplied provider document.
+   * @param {string} kind - Supported collection.
+   * @param {KubernetesResource} body - Complete provider resource.
+   * @returns {Promise<KubernetesResource>} Provider-created object and assigned identity.
+   * @throws {Error} On invalid/conflicting resources, provider rejection or transport failure.
+   */
+  create(kind,body){return this.request('POST',this.path(kind),body);}
+  /**
+   * Merge a provider resource under service-account patch permission.
+   * Requires prior command authorization; side effects persist the patch, including any optimistic concurrency token supplied by its owner.
+   * @param {string} kind - Supported collection.
+   * @param {string} name - Resource name.
+   * @param {unknown} body - Provider merge-patch document owned by the calling adapter.
+   * @returns {Promise<KubernetesResource>} Updated provider object.
+   * @throws {Error} On conflicting versions, provider rejection or transport failure.
+   */
+  patch(kind,name,body){return this.request('PATCH',this.path(kind,name),body);}
+  /**
+   * Read an optional resource under service-account read permission.
+   * Side effects perform a provider read; only HTTP 404 becomes absence, never authorization or transport failure.
+   * @param {string} kind - Supported collection.
+   * @param {string} name - Resource name.
+   * @returns {Promise<KubernetesResource | null>} Current object or confirmed absence.
+   * @throws {Error} On provider failures other than not-found.
+   */
+  async optional(kind,name){try{return await this.get(kind,name);}catch(error){if(error.status===404)return null;throw error;}}
+  /**
+   * Read every page of a namespace collection under list permission.
+   * Side effects perform bounded provider requests without mutating returned resources.
+   * @param {string} kind - Supported collection.
+   * @param {string} selector - Provider label selector, empty for all namespace resources.
+   * @returns {Promise<KubernetesResource[]>} Combined collection across continuation cursors.
+   * @throws {Error} On provider rejection, transport failure or malformed pagination responses.
+   */
+  async list(kind,selector){
+    const items=[];let continuation='';
+    do{
+      const query=new URLSearchParams({labelSelector:selector,limit:'500',...(continuation?{continue:continuation}:{})});
+      const page=await this.request('GET',this.path(kind)+'?'+query);items.push(...page.items);
+      continuation=page.metadata.continue||'';
+    }while(continuation);
+    return items;
+  }
+  /**
+   * Observe a namespace collection with reconnect and watch-cursor recovery.
+   * Requires watch permission; side effects maintain a streaming request/timer and deliver provider events until stopped.
+   * @param {string} kind - Supported collection.
+   * @param {(event: KubernetesWatchEvent) => void} onEvent - Owning application event consumer, excluding provider bookmarks.
+   * @param {(error: Error) => void} [onError] - Bounded watch failure/resync observation callback.
+   * @returns {() => void} Stop function closing the request and pending reconnect timer.
+   * @throws {Error} On invalid initial paths or unreadable projected credentials; stream failures normally reach onError.
+   */
+  watch(kind,onEvent,onError=()=>{}){
+    let stopped=false,current=null,timer=null,version='';
+    const reconnect=()=>{if(stopped||timer)return;timer=setTimeout(()=>{timer=null;connect();},1000);timer.unref();};
+    const dispatch=line=>{
+      try{
+        const event=JSON.parse(line);if(event.object?.metadata?.resourceVersion)version=event.object.metadata.resourceVersion;
+        if(event.type==='ERROR'){if(event.object.code===410)version='';current.destroy(Error('Watch resync'));return false;}
+        if(event.type!=='BOOKMARK')onEvent(event);return true;
+      }catch(error){onError(error);current.destroy();return false;}
+    };
+    const connect=()=>{
+      if(stopped)return;
+      const query=new URLSearchParams({watch:'true',allowWatchBookmarks:'true',timeoutSeconds:'60',...(version?{resourceVersion:version}:{})});
+      const token=fs.readFileSync(this.account+'/token','utf8').trim();
+      current=https.request({host:this.host,port:this.port,path:this.path(kind)+'?'+query,agent:this.agent,
+        headers:{Authorization:'Bearer '+token,Accept:'application/json'}},response=>{
+        if(response.statusCode!==200){if(response.statusCode===410)version='';onError(new ApiError(response.statusCode));response.resume();reconnect();return;}
+        let buffer='';response.setEncoding('utf8');
+        response.on('data',data=>{
+          buffer+=data;if(buffer.length>1024*1024){current.destroy(Error('Watch frame limit'));return;}
+          let newline;
+          while((newline=buffer.indexOf('\n'))>=0){
+            const line=buffer.slice(0,newline);buffer=buffer.slice(newline+1);if(!line.trim())continue;
+            if(!dispatch(line))return;
+          }
+        });
+        response.on('end',reconnect);response.on('error',error=>{if(!stopped)onError(error);reconnect();});
+      });
+      current.setTimeout(75000,()=>current.destroy(Error('Watch deadline')));
+      current.on('error',error=>{if(!stopped)onError(error);reconnect();});current.end();
+    };
+    connect();return ()=>{stopped=true;if(timer)clearTimeout(timer);current?.destroy();};
+  }
+}
+
+// Takeover observes a stable resourceVersion for an entire lease interval rather
+// than trusting wall-clock agreement between workers. Local expiry is monotonic.
+/** Namespace lease guard using monotonic validity and stable-version takeover observation. */
+export class Leadership {
+  /**
+   * @param {Kubernetes} api - Namespace Lease persistence adapter.
+   * @param {LeadershipOptions} options - Process identity and monotonic lease policy.
+   */
+  constructor(api,{podName,duration=15,clock=()=>performance.now(),leaseName='neon-tenant-controller'}){
+    this.api=api;this.identity=podName+':'+randomUUID();this.duration=duration;this.clock=clock;
+    this.leaseName=leaseName;
+    this.deadline=0;this.observedVersion=null;this.observedAt=0;this.busy=false;this.lastError=null;
+  }
+  get active(){return this.clock()<this.deadline;}
+  /**
+   * Require locally valid lease authorization before a mutation.
+   * This guard has no side effects and does not grant automatic writer-failover permission.
+   * @returns {void} Returns only during the process's monotonic ownership interval.
+   * @throws {Error} NOT_LEADER when ownership is absent or expired.
+   */
+  require(){if(!this.active){const error=Error('Controller ownership unavailable');error.code='NOT_LEADER';throw error;}}
+  /**
+   * Acquire or renew a namespace lease using its current resource version.
+   * Requires Lease read/create/patch permission; side effects persist ownership and update the local monotonic deadline or last failure observation.
+   * @returns {Promise<void>} Ownership is reflected by active; a deferred attempt does not imply acquisition.
+   * @throws {Error} Unexpected failures outside the guarded provider attempt; ordinary provider failures update lastError and may revoke local ownership.
+   */
+  async tick(){
+    if(this.busy)return;this.busy=true;const started=this.clock();
+    try{
+      let lease=await this.api.optional('leases',this.leaseName);
+      if(!lease){
+        lease=await this.api.create('leases',{apiVersion:'coordination.k8s.io/v1',kind:'Lease',
+          metadata:{name:this.leaseName},spec:{holderIdentity:this.identity,leaseDurationSeconds:this.duration,
+            acquireTime:new Date().toISOString().replace(/Z$/,'000Z'),renewTime:new Date().toISOString().replace(/Z$/,'000Z')}});
+      }else if(lease.spec.holderIdentity!==this.identity){
+        this.deadline=0;
+        if(lease.metadata.resourceVersion!==this.observedVersion){
+          this.observedVersion=lease.metadata.resourceVersion;this.observedAt=started;return;
+        }
+        const wait=Math.max(this.duration,lease.spec.leaseDurationSeconds||this.duration)*1000+2000;
+        if(started-this.observedAt<wait)return;
+      }
+      lease=await this.api.patch('leases',this.leaseName,{
+        metadata:{resourceVersion:lease.metadata.resourceVersion},spec:{holderIdentity:this.identity,
+          leaseDurationSeconds:this.duration,renewTime:new Date().toISOString().replace(/Z$/,'000Z')}});
+      if(lease.spec.holderIdentity!==this.identity)throw Error('Lease holder mismatch');
+      this.deadline=started+(this.duration-3)*1000;
+      this.lastError=null;
+    }catch(error){this.lastError=error.status||error.code||error.name;if(error.status===409||error.status===403)this.deadline=0;}
+    finally{this.busy=false;}
+  }
+}

@@ -29,6 +29,7 @@
 #include <utime.h>
 
 #include "access/htup_details.h"
+#include "access/neon_xlog.h"
 #include "access/parallel.h"
 #include "catalog/pg_authid.h"
 #include "common/file_perm.h"
@@ -1906,6 +1907,8 @@ process_shared_preload_libraries(void)
 	load_libraries(shared_preload_libraries_string,
 				   "shared_preload_libraries",
 				   false);
+	/* The heap WAL emitted by this fork must be replayable without extensions. */
+	InitializeNeonRmgr();
 	process_shared_preload_libraries_in_progress = false;
 	process_shared_preload_libraries_done = true;
 }

@@ -20,6 +20,7 @@
 #include "common/int.h"
 #include "common/pg_lzcompress.h"
 #include "utils/expandeddatum.h"
+#include "utils/docb.h"
 #include "utils/rel.h"
 
 static struct varlena *toast_fetch_datum(struct varlena *attr);
@@ -52,6 +53,14 @@ detoast_external_attr(struct varlena *attr)
 		 * This is an external stored plain value
 		 */
 		result = toast_fetch_datum(attr);
+		/* DOCB roots depend on immutable bases: flatten must be independent. */
+		if (VARATT_IS_COMPRESSED(result) &&
+			TOAST_COMPRESS_METHOD(result) == TOAST_DOCB_COMPRESSION_ID)
+		{
+			struct varlena *encoded = result;
+			result = docb_decompress(encoded);
+			pfree(encoded);
+		}
 	}
 	else if (VARATT_IS_EXTERNAL_INDIRECT(attr))
 	{
@@ -485,6 +494,8 @@ toast_decompress_datum(struct varlena *attr)
 			return pglz_decompress_datum(attr);
 		case TOAST_LZ4_COMPRESSION_ID:
 			return lz4_decompress_datum(attr);
+		case TOAST_DOCB_COMPRESSION_ID:
+			return docb_decompress(attr);
 		default:
 			elog(ERROR, "invalid compression method id %d", cmid);
 			return NULL;		/* keep compiler quiet */
@@ -528,6 +539,9 @@ toast_decompress_datum_slice(struct varlena *attr, int32 slicelength)
 			return pglz_decompress_datum_slice(attr, slicelength);
 		case TOAST_LZ4_COMPRESSION_ID:
 			return lz4_decompress_datum_slice(attr, slicelength);
+		case TOAST_DOCB_COMPRESSION_ID:
+			/* Generic consumers require a self-contained full value. */
+			return docb_decompress(attr);
 		default:
 			elog(ERROR, "invalid compression method id %d", cmid);
 			return NULL;		/* keep compiler quiet */

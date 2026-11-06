@@ -40,7 +40,8 @@ typedef struct toast_compress_header
 	do { \
 		Assert((len) > 0 && (len) <= VARLENA_EXTSIZE_MASK); \
 		Assert((cm_method) == TOAST_PGLZ_COMPRESSION_ID || \
-			   (cm_method) == TOAST_LZ4_COMPRESSION_ID); \
+			   (cm_method) == TOAST_LZ4_COMPRESSION_ID || \
+			   (cm_method) == TOAST_DOCB_COMPRESSION_ID); \
 		((toast_compress_header *) (ptr))->tcinfo = \
 			(len) | ((uint32) (cm_method) << VARLENA_EXTSIZE_BITS); \
 	} while (0)
@@ -49,6 +50,7 @@ extern Datum toast_compress_datum(Datum value, char cmethod);
 extern Oid	toast_get_valid_index(Oid toastoid, LOCKMODE lock);
 
 extern void toast_delete_datum(Relation rel, Datum value, bool is_speculative);
+extern void toast_delete_datum_only(Relation rel, Datum value, bool is_speculative);
 extern Datum toast_save_datum(Relation rel, Datum value,
 							  struct varlena *oldexternal, int options);
 

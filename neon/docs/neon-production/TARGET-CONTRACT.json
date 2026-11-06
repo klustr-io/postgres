@@ -1,0 +1,31 @@
+{
+  "updated_on": "2026-11-01",
+  "timezone": "Asia/Tokyo",
+  "postgresql_major": 18,
+  "architecture": "amd64",
+  "primary_goal": "Sustained write throughput close to matched raw PostgreSQL",
+  "working_throughput_ratio_target": 0.85,
+  "working_target_note": "On 2026-10-31 the user conditionally accepted 85% of native if more workers can compensate. Treat this as a per-writable-shard target conditional on measured aggregate scaling; read replicas do not add writers to a branch.",
+  "document_storage_goal": "Optimize JSON document mutations while preserving scale-to-zero, fast wake and the accepted failure envelope; evaluate physical deltas, read amplification, transactional indexing and compaction together.",
+  "document_storage_criteria": [
+    "Small patches avoid rewriting unchanged content",
+    "Small projections avoid reading unchanged content"
+  ],
+  "comparison": "Same data, SQL, indexes, cache profile, CPU/memory budget, storage path, compression and foreground acknowledgement policy; report any remaining asymmetry",
+  "resource_comparison_policy": "User explicitly requested both on 2026-10-31: same total CPU budget, and same compute CPU with separately disclosed storage CPU. A result with extra storage CPU cannot pass the same-total-budget screen.",
+  "write_p99_role": "Diagnostic only; the user explicitly removed p99 as a pass/fail requirement",
+  "performance_environment": "Require matched resource/data/policy profiles and no measured S3 operation errors; degraded-storage timings are diagnostics, never a healthy native-PG baseline",
+  "maximum_acknowledged_write_loss_seconds": 1,
+  "failure_scope": "Compute loss or one storage-node failure; block fast writes during replication outages",
+  "excluded_failure_scope": "Compound destruction of remaining acknowledged tail copies during a prolonged replication outage",
+  "planned_sleep": "Stop request admission, drain to external durable quorum, persist ownership/frontier handoff, then remove compute",
+  "wake_goal": "Near-instant wake to usable compute; measure first durable write and cold/full-throughput recovery separately",
+  "production_status": "NOT-PRODUCTION-QUALIFIED",
+  "application_compatibility": "Preserve ordinary PostgreSQL SQL, JSONB, schemas and application calls; no custom document API or required SQL functions",
+  "validation_scope": [
+    "Basic correctness",
+    "One matched native PostgreSQL versus Neon write benchmark",
+    "One scale-to-zero/wake smoke check"
+  ],
+  "custom_document_api": "ABANDONED"
+}

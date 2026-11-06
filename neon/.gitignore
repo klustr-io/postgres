@@ -1,0 +1,11 @@
+# Local credentials, generated evidence and dependencies
+.env
+.env.*
+!.env.example
+local/
+dev/.env
+dev/.venv/
+**/node_modules/
+**/__pycache__/
+**/.pytest_cache/
+tests/reports/local/

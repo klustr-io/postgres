@@ -31,6 +31,8 @@
 
 #include "postgres.h"
 
+#include "storage/smgr.h"
+
 #include <unistd.h>
 #include <sys/stat.h>
 
@@ -107,7 +109,7 @@ wallog_file_removal(char const* path)
 	char	prefix[MAXPGPATH];
 
 	/* Do not wallog AUX file at replica */
-	if (!XLogInsertAllowed())
+	if (!smgr_uses_custom_storage() || !XLogInsertAllowed())
 		return;
 
 	snprintf(prefix, sizeof(prefix), "neon-file:%s", path);
@@ -130,7 +132,7 @@ wallog_file_descriptor(char const* path, int fd, uint64_t limit)
 	Assert(fd >= 0);
 
 	/* Do not wallog AUX file at replica */
-	if (!XLogInsertAllowed())
+	if (!smgr_uses_custom_storage() || !XLogInsertAllowed())
 		return;
 
 	if (fstat(fd, &stat))
@@ -167,7 +169,11 @@ wallog_file_descriptor(char const* path, int fd, uint64_t limit)
 void
 wallog_file(char const* path, uint64_t limit)
 {
-	int fd = OpenTransientFile(path, O_RDONLY | PG_BINARY);
+	int fd;
+
+	if (!smgr_uses_custom_storage() || !XLogInsertAllowed())
+		return;
+	fd = OpenTransientFile(path, O_RDONLY | PG_BINARY);
 	if (fd < 0)
 	{
 		ereport(ERROR,

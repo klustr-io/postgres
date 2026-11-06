@@ -342,6 +342,7 @@ typedef struct StdRdOptions
 	int32		vl_len_;		/* varlena header (do not touch directly!) */
 	int			fillfactor;		/* page fill factor in percent (0..100) */
 	int			toast_tuple_target; /* target for tuple toasting */
+	int			jsonb_storage; /* physical JSONB policy, or inherit default */
 	AutoVacOpts autovacuum;		/* autovacuum-related options */
 	bool		user_catalog_table; /* use as an additional catalog relation */
 	int			parallel_workers;	/* max number of parallel workers */
@@ -664,6 +665,15 @@ RelationCloseSmgr(Relation relation)
 /*
  * RELATION_IS_OTHER_TEMP
  *		Test for a temporary relation that belongs to some other session.
+ *
+ * Reading another session's temp-table data through never works right:
+ * the owning session keeps the data in its private local buffer pool,
+ * which we cannot access.  Existing buffer-manager entry points
+ * (ReadBuffer_common(), StartReadBuffersImpl(), read_stream_begin_impl(),
+ * PrefetchBuffer() and ExtendBufferedRelCommon()) already enforce this; any
+ * new buffer-access entry points must do the same.  Command-level code
+ * (TRUNCATE, ALTER TABLE, VACUUM, CLUSTER, REINDEX, ...) additionally uses
+ * this macro for command-specific error messages.
  *
  * Beware of multiple eval of argument
  */

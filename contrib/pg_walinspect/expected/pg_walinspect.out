@@ -95,7 +95,7 @@ SELECT COUNT(*) >= 1 AS ok FROM pg_get_wal_block_info(:'wal_lsn1', :'wal_lsn2');
 -- ===================================================================
 SELECT oid AS sample_tbl_oid FROM pg_class WHERE relname = 'sample_tbl' \gset
 SELECT COUNT(*) >= 1 AS ok FROM pg_get_wal_records_info(:'wal_lsn1', :'wal_lsn2')
-			WHERE block_ref LIKE concat('%', :'sample_tbl_oid', '%') AND resource_manager = 'Heap';
+			WHERE block_ref LIKE concat('%', :'sample_tbl_oid', '%') AND resource_manager = 'neon';
  ok 
 ----
  t
@@ -106,7 +106,7 @@ SELECT COUNT(*) >= 1 AS ok FROM pg_get_wal_records_info(:'wal_lsn1', :'wal_lsn2'
 -- record_type
 -- ===================================================================
 SELECT COUNT(*) >= 1 AS ok FROM pg_get_wal_records_info(:'wal_lsn1', :'wal_lsn2')
-			WHERE resource_manager = 'Heap' AND record_type = 'INSERT';
+			WHERE resource_manager = 'neon' AND record_type = 'INSERT';
  ok 
 ----
  t

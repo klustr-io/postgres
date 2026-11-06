@@ -1,0 +1,170 @@
+# Deployment source: neon/packaging/deploy/render.mjs
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: neon-bootstrap
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    metadata:
+      name: neon-bootstrap
+    rules:
+      - apiGroups:
+          - ""
+        resources:
+          - secrets
+          - configmaps
+        verbs:
+          - get
+          - create
+          - patch
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: neon-bootstrap
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: Role
+      name: neon-bootstrap
+    subjects:
+      - kind: ServiceAccount
+        name: neon-bootstrap
+        namespace: neon
+  - apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: neon-init
+    spec:
+      backoffLimit: 8
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app: neon-bootstrap
+        spec:
+          serviceAccountName: neon-bootstrap
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: init
+              image: ghcr.io/klustr-io/neon-tenant-controller@sha256:98fd4dde0fff823387022a81d58d593d67df9a4c463649a4cda9d8371afb5fdb
+              imagePullPolicy: IfNotPresent
+              command:
+                - /usr/local/bin/node
+                - /app/src/composition/TenantProvisioningInit.mjs
+                - init
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              env:
+                - name: NEON_PLATFORM
+                  value: kubernetes
+                - name: POD_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+              volumeMounts:
+                - name: config
+                  mountPath: /etc/neon
+                  readOnly: true
+                - name: state
+                  mountPath: /state
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: config
+              configMap:
+                name: neon-cluster
+            - name: state
+              emptyDir: {}
+            - name: tmp
+              emptyDir: {}
+          nodeSelector:
+            kubernetes.io/arch: amd64
+            kubernetes.io/os: linux
+  - apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: neon-provision
+    spec:
+      backoffLimit: 8
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app: neon-bootstrap
+        spec:
+          serviceAccountName: neon-bootstrap
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: provision
+              image: ghcr.io/klustr-io/neon-tenant-controller@sha256:98fd4dde0fff823387022a81d58d593d67df9a4c463649a4cda9d8371afb5fdb
+              imagePullPolicy: IfNotPresent
+              command:
+                - /usr/local/bin/node
+                - /app/src/composition/TenantProvisioningInit.mjs
+                - provision
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              env:
+                - name: NEON_PLATFORM
+                  value: kubernetes
+                - name: POD_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+              volumeMounts:
+                - name: config
+                  mountPath: /etc/neon
+                  readOnly: true
+                - name: state
+                  mountPath: /state
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: config
+              configMap:
+                name: neon-cluster
+            - name: state
+              emptyDir: {}
+            - name: tmp
+              emptyDir: {}
+          nodeSelector:
+            kubernetes.io/arch: amd64
+            kubernetes.io/os: linux

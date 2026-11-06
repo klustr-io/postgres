@@ -133,6 +133,7 @@
 #include "pgstat.h"
 #include "replication/logical.h"
 #include "replication/message.h"
+#include "storage/smgr.h"
 #include "replication/reorderbuffer.h"
 #include "replication/snapbuild.h"
 #include "replication/snapbuild_internal.h"
@@ -1652,7 +1653,7 @@ SnapBuildSerialize(SnapBuild *builder, XLogRecPtr lsn)
 				 errmsg("could not open file \"%s\": %m", tmppath)));
 
 	/* Do not wallog AUX file at replica */
-	if (XLogInsertAllowed())
+	if (smgr_uses_custom_storage() && XLogInsertAllowed())
 	{
 		char		prefix[MAXPGPATH + sizeof("neon-file:")];
 		/* NEON specific: persist snapshot in storage using logical message */
@@ -2043,7 +2044,7 @@ CheckPointSnapBuild(void)
 			elog(DEBUG1, "removing snapbuild snapshot %s", path);
 
 			/* Do not wallog AUX file at replica */
-			if (XLogInsertAllowed())
+			if (smgr_uses_custom_storage() && XLogInsertAllowed())
 			{
 				char	prefix[MAXPGPATH + sizeof(PG_LOGICAL_SNAPSHOTS_DIR) + sizeof("neon-file:")];
 				/* NEON specific: delete file from storage using logical message */

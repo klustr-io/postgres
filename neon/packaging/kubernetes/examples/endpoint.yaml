@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: neon-ep-example
+  namespace: neon
+  labels:
+    neon.klustr.io/endpoint: "true"
+data:
+  endpoint.json: |
+    {
+      "endpointId": "ep-example",
+      "projectId": "example",
+      "branchId": "main",
+      "nodeName": "replace-with-worker-name",
+      "image": "registry.example.com/neon/compute@sha256:ac3c662f0425f118093181f1b1f2be8e63b3edce4d7261fdf8c2ccf2148393e0",
+      "profile": "durable",
+      "computeSpecSecret": "example-compute-spec",
+      "adminSecret": "example-admin",
+      "rolesSecret": "example-roles",
+      "tlsSecret": "example-compute-tls",
+      "caSecret": "neon-service-ca",
+      "allowedIps": ["10.0.0.0/8"],
+      "suspend": {"mode": "idle", "idleSeconds": 300},
+      "databasePolicies": {
+        "billing": {"mode": "never"},
+        "events": {"mode": "idle", "idleSeconds": 300}
+      }
+    }

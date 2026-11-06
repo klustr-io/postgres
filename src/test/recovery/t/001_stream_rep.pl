@@ -82,7 +82,8 @@ $result =
 print "standby 2: $result\n";
 is($result, qq(1002), 'check streamed content on standby 2');
 
-# Likewise, but for a sequence
+# Likewise, but for a sequence. This fork uses SEQ_LOG_VALS=0, so replay
+# must preserve the allocated value rather than upstream's 32 prelogged values.
 $node_primary->safe_psql('postgres',
 	"CREATE SEQUENCE seq1; SELECT nextval('seq1')");
 
@@ -92,11 +93,11 @@ $node_standby_1->wait_for_replay_catchup($node_standby_2, $node_primary);
 
 $result = $node_standby_1->safe_psql('postgres', "SELECT * FROM seq1");
 print "standby 1: $result\n";
-is($result, qq(33|0|t), 'check streamed sequence content on standby 1');
+is($result, qq(1|0|t), 'check streamed sequence content on standby 1');
 
 $result = $node_standby_2->safe_psql('postgres', "SELECT * FROM seq1");
 print "standby 2: $result\n";
-is($result, qq(33|0|t), 'check streamed sequence content on standby 2');
+is($result, qq(1|0|t), 'check streamed sequence content on standby 2');
 
 # Check pg_sequence_last_value() returns NULL for unlogged sequence on standby
 $node_primary->safe_psql('postgres',

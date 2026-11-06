@@ -1,0 +1,14 @@
+# Deployment source: neon/packaging/deploy/render.mjs
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: neon-init
+  namespace: neon
+spec:
+  template:
+    spec:
+      containers:
+        - name: init
+          env:
+            - name: NEON_INITIALIZE_ONLY
+              value: "true"

@@ -1,0 +1,26 @@
+name: klustr-pg18-dev
+services:
+  postgres:
+    image: ${PG_IMAGE:-klustr-postgres:18.2-dev}
+    platform: linux/amd64
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-klustr_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-klustr_dev}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Generate neon/dev/.env using make -f neon/Makefile env}
+    ports:
+      - "127.0.0.1:${PGPORT:-55418}:5432"
+    volumes:
+      - pg18-dev-data:/var/lib/postgresql/data
+    shm_size: 256mb
+    mem_limit: ${PG_MEMORY_LIMIT:-2g}
+    cpus: ${PG_CPU_LIMIT:-4}
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD-SHELL", "test \"$$(cat /proc/1/comm)\" = postgres && pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_connections=150", "-c", "shared_buffers=256MB"]
+volumes:
+  pg18-dev-data:
+    name: klustr-pg18-dev-data

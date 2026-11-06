@@ -88,6 +88,8 @@
 
 /* User-settable parameters for sync rep */
 char	   *SyncRepStandbyNames;
+SyncRepCommitGuard_hook_type SyncRepCommitGuard_hook = NULL;
+SyncRepCommitProvider_hook_type SyncRepCommitProvider_hook = NULL;
 
 #define SyncStandbysDefined() \
 	(SyncRepStandbyNames != NULL && SyncRepStandbyNames[0] != '\0')
@@ -98,6 +100,8 @@ SyncRepConfigData *SyncRepConfig = NULL;
 static int	SyncRepWaitMode = SYNC_REP_NO_WAIT;
 
 static void SyncRepQueueInsert(int mode);
+static void SyncRepWaitForLSNInternal(XLogRecPtr lsn, bool commit,
+									bool *query_cancelled);
 static void SyncRepCancelWait(void);
 static int	SyncRepWakeQueue(bool all, int mode);
 
@@ -146,6 +150,35 @@ static bool SyncRepQueueIsOrderedByLSN(int mode);
  */
 void
 SyncRepWaitForLSN(XLogRecPtr lsn, bool commit)
+{
+	bool		query_cancelled = false;
+
+	if (!SyncRepCommitProvider_hook || !SyncRepCommitProvider_hook(lsn, commit))
+		SyncRepWaitForLSNInternal(lsn, commit, &query_cancelled);
+
+	/*
+	 * Let synchronous commits use the ordered native wait queue first. A guard
+	 * that broadcasts on every quorum advance otherwise wakes transactions
+	 * whose WAL is not durable yet, bypassing the queue's prefix filtering.
+	 * The guard still runs on every exit, including asynchronous commits and
+	 * configuration changes that release the native queue without replication.
+	 */
+	if (SyncRepCommitGuard_hook)
+	{
+		bool		saved_query_cancel = QueryCancelPending;
+
+		/* Native sync rep consumes cancellation with a warning. Preserve it
+		 * across the guard so a strict policy can close the connection rather
+		 * than acknowledge an unreplicated commit. */
+		if (query_cancelled)
+			QueryCancelPending = true;
+		SyncRepCommitGuard_hook(lsn, commit);
+		QueryCancelPending = saved_query_cancel;
+	}
+}
+
+static void
+SyncRepWaitForLSNInternal(XLogRecPtr lsn, bool commit, bool *query_cancelled)
 {
 	int			mode;
 
@@ -316,6 +349,7 @@ SyncRepWaitForLSN(XLogRecPtr lsn, bool commit)
 		 */
 		if (QueryCancelPending)
 		{
+			*query_cancelled = true;
 			QueryCancelPending = false;
 			ereport(WARNING,
 					(errmsg("canceling wait for synchronous replication due to user request"),
@@ -1078,6 +1112,7 @@ check_synchronous_standby_names(char **newval, void **extra, GucSource source)
 			if (syncrep_parse_error_msg)
 				GUC_check_errdetail("%s", syncrep_parse_error_msg);
 			else
+				/* translator: %s is a GUC name */
 				GUC_check_errdetail("\"%s\" parser failed.",
 									"synchronous_standby_names");
 			return false;

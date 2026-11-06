@@ -3,6 +3,8 @@
 
 #include "storage/off.h"
 
+extern void InitializeNeonRmgr(void);
+
 /*
  * The RMGR id of the Neon RMGR
  *

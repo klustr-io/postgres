@@ -43,3 +43,11 @@ lib*.pc
 /Release/
 /tmp_install/
 /portlock/
+
+# Neon local credentials and source-build outputs
+/.env
+/.env.*
+/.secrets
+/neon/packaging/compose/.env
+/build/
+/.pytest_cache/

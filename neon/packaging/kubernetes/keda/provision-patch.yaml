@@ -1,0 +1,7 @@
+# Deployment source: neon/packaging/deploy/render.mjs
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: neon-provision
+  namespace: neon
+$patch: delete

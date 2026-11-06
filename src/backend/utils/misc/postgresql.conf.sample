@@ -250,7 +250,7 @@
 #wal_log_hints = off			# also do full page writes of non-critical updates
 					# (change requires restart)
 #wal_compression = off			# enables compression of full-page writes;
-					# off, pglz, lz4, zstd, or on
+					# off, pglz (or "on"), lz4, or zstd
 #wal_init_zero = on			# zero-fill new WAL files
 #wal_recycle = on			# recycle WAL files
 #wal_buffers = -1			# min 32kB, -1 sets based on shared_buffers
@@ -818,6 +818,7 @@
 #dynamic_library_path = '$libdir'
 #extension_control_path = '$system'
 #gin_fuzzy_search_limit = 0
+#output_plugin_libraries = 'pgoutput, test_decoding'  # approved plugins for logical decoding
 
 
 #------------------------------------------------------------------------------
@@ -884,5 +885,13 @@
 #------------------------------------------------------------------------------
 # CUSTOMIZED OPTIONS
 #------------------------------------------------------------------------------
+
+# Neon fork settings (also available without a remote storage extension).
+#enable_indexscan_prefetch = on
+#enable_indexonlyscan_prefetch = on
+#max_replication_apply_lag = -1	# MB; -1 disables the limit
+#max_replication_flush_lag = -1	# MB; -1 disables the limit
+#max_replication_write_lag = -1	# MB; -1 disables the limit
+#neon_test_evict = off		# test-only forced buffer eviction; restart
 
 # Add settings for extensions here

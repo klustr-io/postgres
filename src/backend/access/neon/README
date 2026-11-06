@@ -1,0 +1,33 @@
+Standalone Neon heap WAL handlers
+================================
+
+This fork unconditionally emits RM_NEON_ID (134) heap WAL. Without the
+matching redo and logical decoding functions, a standalone database cannot
+recover its own acknowledged writes after a crash or stream them to replicas.
+
+These handlers derive from pgxn/neon_rmgr in neondatabase/neon commit
+fa504217c61bbcaf5c512d75830564541f917f8f. See LICENSE and NOTICE. They require
+no pageserver, safekeeper, commercial platform or separately installed module.
+
+The fallback is installed after shared_preload_libraries have been loaded.
+An explicitly preloaded extension that registers rmgr 134 takes precedence.
+The registration does not change WAL record IDs or layouts, or the storage
+manager selection. Resource manager 134 remains in the custom ID range.
+
+Adaptations from the PG17 implementation:
+* Compile the handlers into the backend and register only an absent rmgr 134.
+* Use PostgreSQL 18's ReorderBufferAllocChange/AllocTupleBuf APIs.
+* Calculate insert payload sizes using SizeOfNeonHeapHeader, and subtract
+  SizeOfNeonHeapDelete (rather than a tuple header) before decoding old rows.
+* Reuse the identical core heap_mask implementation for consistency checks.
+* Retain the base snapshot during PG18 fast-forward decoding so catalog_xmin
+  protects catalog tuples required by later logical decoding.
+* Remove unused PG16 branches and extension module/bootstrap wrappers.
+* Use distinct exported symbol names so separately preloaded neon_rmgr
+  libraries bind their decoding callbacks to their own implementations.
+
+The complete native recovery, subscription, logical decoding, WAL consistency
+and SQL tests are required for this code. A single crash-recovery smoke is
+not sufficient to establish correctness for all record types. The development
+qualification harness also preserves failures from the original handler-less
+source. See docs/qualification/ for the measured validation state.

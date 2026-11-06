@@ -1,0 +1,13 @@
+# Deployment source: neon/packaging/deploy/render.mjs
+apiVersion: neon.klustr.io/v1alpha1
+kind: NeonDatabase
+metadata:
+  name: events
+  namespace: neon
+spec:
+  database: app
+  size: small
+  tier: shared
+  suspend:
+    mode: idle
+    idleSeconds: 300

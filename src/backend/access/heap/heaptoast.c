@@ -23,6 +23,7 @@
  */
 
 #include "postgres.h"
+#include "utils/docb.h"
 
 #include "access/detoast.h"
 #include "access/genam.h"
@@ -155,6 +156,7 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 	}
 	ttc.ttc_attr = toast_attr;
 	toast_tuple_init(&ttc);
+	docb_toast_prepare(&ttc, options);
 
 	/* ----------
 	 * Compress and/or save external until data fits into target length

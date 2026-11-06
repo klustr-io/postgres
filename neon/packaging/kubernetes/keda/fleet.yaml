@@ -1,0 +1,30 @@
+# Deployment source: neon/packaging/deploy/render.mjs
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: neon.klustr.io/v1alpha1
+    kind: NeonStorageFleet
+    metadata:
+      name: storage
+    spec: {}
+  - apiVersion: keda.sh/v1alpha1
+    kind: ScaledObject
+    metadata:
+      name: neon-storage
+    spec:
+      scaleTargetRef:
+        apiVersion: neon.klustr.io/v1alpha1
+        kind: NeonStorageFleet
+        name: storage
+      minReplicaCount: 0
+      maxReplicaCount: 1
+      pollingInterval: 5
+      cooldownPeriod: 30
+      triggers:
+        - type: external-push
+          metadata:
+            scalerAddress: neon-controller.neon.svc.cluster.local:9091
+            fleet: "true"
+            enableTLS: "true"
+          authenticationRef:
+            name: neon-keda-tls

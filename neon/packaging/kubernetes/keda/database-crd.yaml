@@ -1,0 +1,208 @@
+# Deployment source: neon/packaging/deploy/render.mjs
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: neondatabases.neon.klustr.io
+spec:
+  group: neon.klustr.io
+  scope: Namespaced
+  names:
+    kind: NeonDatabase
+    plural: neondatabases
+    singular: neondatabase
+    shortNames:
+      - neondb
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+        scale:
+          specReplicasPath: .spec.replicas
+          statusReplicasPath: .status.replicas
+          labelSelectorPath: .status.selector
+      additionalPrinterColumns:
+        - name: Size
+          type: string
+          jsonPath: .spec.size
+        - name: Tier
+          type: string
+          jsonPath: .spec.tier
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Replicas
+          type: integer
+          jsonPath: .status.replicas
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                preloadLibraries:
+                  type: array
+                  maxItems: 3
+                  uniqueItems: true
+                  items:
+                    type: string
+                    enum:
+                      - timescaledb
+                      - anon
+                      - pg_textsearch
+                identity:
+                  type: object
+                  required:
+                    - tenant
+                    - project
+                  properties:
+                    tenant:
+                      type: string
+                      pattern: ^[a-z][a-z0-9-]{0,62}$
+                    project:
+                      type: string
+                      pattern: ^[a-z][a-z0-9-]{0,62}$
+                lifecycle:
+                  type: string
+                  enum:
+                    - active
+                    - suspended
+                    - retired
+                  default: active
+                deletionPolicy:
+                  type: string
+                  enum:
+                    - Retain
+                    - Delete
+                  default: Retain
+                backup:
+                  type: object
+                  x-kubernetes-validations:
+                    - rule: "!has(self.scheduleSeconds) || self.scheduleSeconds == 0 || (self.scheduleSeconds >= 300 && (!has(self.retentionSeconds) || self.retentionSeconds >= self.scheduleSeconds))"
+                      message: Schedule must be at least five minutes and fit retention
+                  properties:
+                    historySeconds:
+                      type: integer
+                      minimum: 0
+                      maximum: 2592000
+                    scheduleSeconds:
+                      type: integer
+                      minimum: 0
+                      maximum: 2592000
+                    retentionSeconds:
+                      type: integer
+                      minimum: 300
+                      maximum: 31536000
+                branchFrom:
+                  type: object
+                  required:
+                    - database
+                  properties:
+                    database:
+                      type: string
+                      pattern: ^[a-z][a-z0-9-]{0,38}$
+                    backup:
+                      type: string
+                      pattern: ^[a-z][a-z0-9-]{0,38}$
+                    lsn:
+                      type: string
+                      pattern: ^[0-9A-Fa-f]{1,8}/[0-9A-Fa-f]{1,8}$
+                    timestamp:
+                      type: string
+                      format: date-time
+                replicas:
+                  type: integer
+                  minimum: 0
+                  maximum: 1
+                  default: 0
+                database:
+                  type: string
+                  pattern: ^[a-z][a-z0-9_]{0,62}$
+                  default: app
+                  x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: Database name is immutable
+                user:
+                  type: string
+                  pattern: ^[a-z][a-z0-9_]{0,62}$
+                  default: app_user
+                  x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: Database role is immutable
+                size:
+                  type: string
+                  maxLength: 39
+                tier:
+                  type: string
+                  maxLength: 39
+                profile:
+                  type: string
+                  enum:
+                    - durable
+                    - bounded-async
+                    - best-effort
+                  default: durable
+                shards:
+                  type: integer
+                  enum:
+                    - 1
+                    - 2
+                    - 4
+                    - 8
+                    - 16
+                    - 32
+                  default: 1
+                allowedIps:
+                  type: array
+                  maxItems: 100
+                  minItems: 1
+                  items:
+                    type: string
+                    maxLength: 64
+                suspend:
+                  type: object
+                  properties:
+                    mode:
+                      type: string
+                      enum:
+                        - idle
+                        - never
+                    idleSeconds:
+                      type: integer
+                      minimum: 1
+                      maximum: 604800
+                databasePolicies:
+                  type: object
+                  additionalProperties:
+                    type: object
+                    properties:
+                      mode:
+                        type: string
+                        enum:
+                          - idle
+                          - never
+                      idleSeconds:
+                        type: integer
+                        minimum: 1
+                        maximum: 604800
+              x-kubernetes-validations:
+                - rule: "!has(oldSelf.branchFrom) ? !has(self.branchFrom) : has(self.branchFrom) && self.branchFrom == oldSelf.branchFrom"
+                  message: Branch source is immutable
+                - rule: self.lifecycle != "retired" || oldSelf.lifecycle == "retired" || self.replicas == 0
+                  message: Retirement stops compute
+                - rule: oldSelf.lifecycle != "retired" || self.lifecycle == "retired"
+                  message: Retired names cannot be reused
+                - rule: self.deletionPolicy != "Delete" || self.lifecycle == "retired"
+                  message: Delete requires retirement
+                - rule: "!has(self.branchFrom) || !has(self.backup)"
+                  message: Branches inherit root history policy
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                replicas:
+                  type: integer
+                selector:
+                  type: string

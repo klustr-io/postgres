@@ -1,0 +1,42 @@
+# Deployment source: neon/packaging/deploy/render.mjs
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: neonstoragefleets.neon.klustr.io
+spec:
+  group: neon.klustr.io
+  scope: Namespaced
+  names:
+    kind: NeonStorageFleet
+    plural: neonstoragefleets
+    singular: neonstoragefleet
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+        scale:
+          specReplicasPath: .spec.replicas
+          statusReplicasPath: .status.replicas
+          labelSelectorPath: .status.selector
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                replicas:
+                  type: integer
+                  minimum: 0
+                  maximum: 1
+                  default: 0
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                replicas:
+                  type: integer
+                selector:
+                  type: string

@@ -1,0 +1,41 @@
+# Deployment source: neon/packaging/deploy/render.mjs
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: neon-tenant-controller
+  namespace: neon
+spec:
+  template:
+    spec:
+      containers:
+        - name: controller
+          env:
+            - name: NEON_DATABASE_API
+              value: "true"
+            - name: NEON_PLATFORM
+              value: kubernetes
+            - name: NEON_FLEET_SCALE_TO_ZERO
+              value: "true"
+            - name: NEON_STATE
+              value: /tmp/provision-state
+          ports:
+            - name: keda
+              containerPort: 9091
+          volumeMounts:
+            - name: management
+              mountPath: /run/management
+              readOnly: true
+            - name: bootstrap-ready
+              mountPath: /run/bootstrap-ready
+              readOnly: true
+      volumes:
+        - name: management
+          secret:
+            secretName: neon-management-auth
+            defaultMode: 288
+        - name: bootstrap-ready
+          secret:
+            secretName: neon-bootstrap-state
+            items:
+              - key: identity.json
+                path: identity.json

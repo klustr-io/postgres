@@ -29,6 +29,7 @@ backend_sources += files(
   'datetime.c',
   'datum.c',
   'dbsize.c',
+  'docb.c',
   'domains.c',
   'encode.c',
   'enum.c',

@@ -1,0 +1,246 @@
+//!
+//!   WAL service listens for client connections and
+//!   receive WAL from wal_proposer and send it to WAL receivers
+//!
+use std::os::fd::AsRawFd;
+use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::{Context, Result};
+use postgres_backend::{AuthType, PostgresBackend, QueryError};
+use safekeeper_api::models::ConnectionId;
+use tokio::net::TcpStream;
+use tokio_io_timeout::TimeoutStream;
+use tokio_util::sync::CancellationToken;
+use tracing::*;
+use utils::auth::Scope;
+use utils::measured_stream::MeasuredStream;
+
+use crate::handler::SafekeeperPostgresHandler;
+use crate::metrics::TrafficMetrics;
+use crate::{GlobalTimelines, SafeKeeperConf};
+
+/// Accept incoming TCP connections and spawn them into a background thread.
+///
+/// allowed_auth_scope is either SafekeeperData (wide JWT tokens giving access
+/// to any tenant are allowed) or Tenant (only tokens giving access to specific
+/// tenant are allowed). Doesn't matter if auth is disabled in conf.
+pub async fn task_main(
+    conf: Arc<SafeKeeperConf>,
+    pg_listener: std::net::TcpListener,
+    allowed_auth_scope: Scope,
+    tls_config: Option<Arc<rustls::ServerConfig>>,
+    global_timelines: Arc<GlobalTimelines>,
+) -> anyhow::Result<()> {
+    task_main_inner(
+        conf,
+        pg_listener,
+        allowed_auth_scope,
+        tls_config,
+        global_timelines,
+        false,
+    )
+    .await
+}
+
+pub async fn native_task_main(
+    conf: Arc<SafeKeeperConf>,
+    pg_listener: std::net::TcpListener,
+    allowed_auth_scope: Scope,
+    tls_config: Option<Arc<rustls::ServerConfig>>,
+    global_timelines: Arc<GlobalTimelines>,
+) -> anyhow::Result<()> {
+    task_main_inner(
+        conf,
+        pg_listener,
+        allowed_auth_scope,
+        tls_config,
+        global_timelines,
+        true,
+    )
+    .await
+}
+
+enum AcceptedSocket {
+    Control(TcpStream),
+    Native(std::net::TcpStream),
+}
+
+fn wal_stream<IO: tokio::io::AsyncRead + tokio::io::AsyncWrite>(
+    io: IO, native_api: bool, write_deadline: Duration,
+) -> TimeoutStream<IO> {
+    let mut stream = TimeoutStream::new(io);
+    stream.set_read_timeout(Some(Duration::from_secs(60 * 10)));
+    // Cover normal feedback, error responses and final framed/TLS shutdown.
+    // Only socket writes expire; accepted WAL mutations always finish.
+    stream.set_write_timeout(native_api.then_some(write_deadline));
+    stream
+}
+
+async fn task_main_inner(
+    conf: Arc<SafeKeeperConf>,
+    pg_listener: std::net::TcpListener,
+    allowed_auth_scope: Scope,
+    tls_config: Option<Arc<rustls::ServerConfig>>,
+    global_timelines: Arc<GlobalTimelines>,
+    native_only: bool,
+) -> anyhow::Result<()> {
+    // Tokio's from_std won't do this for us, per its comment.
+    pg_listener.set_nonblocking(true)?;
+
+    let listener = tokio::net::TcpListener::from_std(pg_listener)?;
+    let mut connection_count: ConnectionCount = 0;
+
+    loop {
+        let (socket, peer_addr) = listener.accept().await.context("accept")?;
+        debug!("accepted connection from {}", peer_addr);
+        let conf = conf.clone();
+        let conn_id = issue_connection_id(&mut connection_count);
+        let global_timelines = global_timelines.clone();
+        let tls_config = tls_config.clone();
+        // Re-register native sockets on their own runtime's reactor. There is
+        // no cross-runtime handoff for each read/write or filesystem batch.
+        let socket = if native_only {
+            AcceptedSocket::Native(socket.into_std()?)
+        } else {
+            AcceptedSocket::Control(socket)
+        };
+        let task =
+            async move {
+                let socket=match socket {
+                    AcceptedSocket::Control(socket)=>socket,
+                    AcceptedSocket::Native(socket)=>match TcpStream::from_std(socket) {
+                        Ok(socket)=>socket,
+                        Err(error)=>{ error!("native socket registration failed: {error}"); return; }
+                    },
+                };
+                let operation=handle_socket(socket, conf, conn_id, allowed_auth_scope, tls_config, global_timelines,native_only);
+                let result=if native_only { crate::wal_storage::native_ingest_scope(operation).await }
+                    else { operation.await };
+                if let Err(err) = result {
+                    error!("connection handler exited: {}", err);
+                }
+            }
+            .instrument(info_span!("", cid = %conn_id, native_only, ttid = field::Empty, application_name = field::Empty, shard = field::Empty));
+        if native_only {
+            crate::NATIVE_INGEST_RUNTIME.spawn(task);
+        } else {
+            tokio::spawn(task);
+        }
+    }
+}
+
+/// This is run by `task_main` above, inside a background thread.
+///
+async fn handle_socket(
+    socket: TcpStream,
+    conf: Arc<SafeKeeperConf>,
+    conn_id: ConnectionId,
+    allowed_auth_scope: Scope,
+    tls_config: Option<Arc<rustls::ServerConfig>>,
+    global_timelines: Arc<GlobalTimelines>,
+    native_only: bool,
+) -> Result<(), QueryError> {
+    socket.set_nodelay(true)?;
+    let socket_fd = socket.as_raw_fd();
+    let peer_addr = socket.peer_addr()?;
+
+    // Set timeout on reading from the socket. It prevents hanged up connection
+    // if client suddenly disappears. Note that TCP_KEEPALIVE is not enabled by
+    // default, and tokio doesn't provide ability to set it out of the box.
+    let socket = wal_stream(socket, conf.enable_native_wal_api, Duration::from_secs(60));
+    // pin! is here because TimeoutStream (due to storing sleep futures inside)
+    // is not Unpin, and all pgbackend/framed/tokio dependencies require stream
+    // to be Unpin. Which is reasonable, as indeed something like TimeoutReader
+    // shouldn't be moved.
+    let socket = std::pin::pin!(socket);
+
+    let traffic_metrics = TrafficMetrics::new();
+    if let Some(current_az) = conf.availability_zone.as_deref() {
+        traffic_metrics.set_sk_az(current_az);
+    }
+
+    let socket = MeasuredStream::new(
+        socket,
+        |cnt| {
+            traffic_metrics.observe_read(cnt);
+        },
+        |cnt| {
+            traffic_metrics.observe_write(cnt);
+        },
+    );
+
+    let auth_key = match allowed_auth_scope {
+        Scope::Tenant => conf.pg_tenant_only_auth.clone(),
+        _ => conf.pg_auth.clone(),
+    };
+    let auth_type = match auth_key {
+        None => AuthType::Trust,
+        Some(_) => AuthType::NeonJWT,
+    };
+    let auth_pair = auth_key.map(|key| (allowed_auth_scope, key));
+    let mut conn_handler = SafekeeperPostgresHandler::new(
+        conf,
+        conn_id,
+        Some(traffic_metrics.clone()),
+        auth_pair,
+        global_timelines,
+    );
+    conn_handler.native_only = native_only;
+    let pgbackend =
+        PostgresBackend::new_from_io(socket_fd, socket, peer_addr, auth_type, tls_config)?;
+    // libpq protocol between safekeeper and walproposer / pageserver
+    // We don't use shutdown.
+    pgbackend
+        .run(&mut conn_handler, &CancellationToken::new())
+        .await
+}
+
+pub type ConnectionCount = u32;
+
+pub fn issue_connection_id(count: &mut ConnectionCount) -> ConnectionId {
+    *count = count.wrapping_add(1);
+    *count
+}
+
+#[cfg(test)]
+mod native_write_deadline_tests {
+    use super::*;
+    use pq_proto::BeMessage;
+    use tokio::io::AsyncWriteExt;
+
+    #[tokio::test]
+    async fn stalled_native_feedback_expires() {
+        let (server, _nonreading_peer) = tokio::io::duplex(1);
+        let stream = wal_stream(server, true, Duration::from_millis(5));
+        let mut stream = std::pin::pin!(stream);
+        let result = tokio::time::timeout(Duration::from_millis(200), stream.write_all(&[0; 64]))
+            .await
+            .expect("native feedback remained blocked past its deadline");
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    #[tokio::test]
+    async fn stalled_native_copy_cleanup_expires() {
+        let (server, _nonreading_peer) = tokio::io::duplex(1);
+        let stream = wal_stream(server, true, Duration::from_millis(5));
+        let stream = std::pin::pin!(stream);
+        let mut backend = PostgresBackend::new_from_io(
+            -1, stream, "127.0.0.1:1".parse().unwrap(), AuthType::Trust, None,
+        ).unwrap();
+        backend.write_message_noflush(&BeMessage::CopyData(&[0; 64])).unwrap();
+        tokio::time::timeout(Duration::from_millis(200),
+            backend.handle_copy_stream_end(postgres_backend::CopyStreamHandlerEnd::Cancelled))
+            .await.expect("native cleanup retained a stalled connection");
+        assert!(backend.read_message().await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn ordinary_wal_backpressure_policy_is_preserved() {
+        let (server, _nonreading_peer) = tokio::io::duplex(1);
+        let stream = wal_stream(server, false, Duration::from_millis(5));
+        let mut stream = std::pin::pin!(stream);
+        assert!(tokio::time::timeout(Duration::from_millis(20), stream.write_all(&[0; 64]))
+            .await.is_err());
+    }
+}

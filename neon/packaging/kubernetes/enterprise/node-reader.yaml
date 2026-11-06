@@ -1,0 +1,13 @@
+# Deployment source: neon/packaging/deploy/render.mjs
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: neon-fleet-node-reader
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - get
+      - list

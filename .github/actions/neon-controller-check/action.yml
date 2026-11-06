@@ -1,0 +1,29 @@
+name: Neon controller contracts
+description: Check controller source, public behavior and packaged deployment freshness
+runs:
+  using: composite
+  steps:
+    - name: Install locked development dependencies
+      shell: bash
+      run: npm ci --prefix neon/controller/tenant-compute --ignore-scripts --no-audit --no-fund
+    - name: Controller lint and boundary regressions
+      shell: bash
+      run: |
+        npm run lint --prefix neon/controller/tenant-compute
+        npm run architecture --prefix neon/controller/tenant-compute
+        npm test --prefix neon/controller/tenant-compute
+    - name: Install pinned deployment renderer
+      shell: bash
+      run: |
+        set -euo pipefail
+        binary="$RUNNER_TEMP/neon-kubectl/kubectl"
+        mkdir -p "$(dirname "$binary")"
+        curl --fail --silent --show-error --location --output "$binary" https://dl.k8s.io/release/v1.36.1/bin/linux/amd64/kubectl
+        printf '%s  %s\n' '629d3f410e09bf49b64ae7079f7f0bda1191efed311f7d37fdbab0ad5b0ec2b7' "$binary" | sha256sum --check -
+        chmod +x "$binary"
+        dirname "$binary" >> "$GITHUB_PATH"
+    - name: Verify checked-in deployments match release inputs
+      shell: bash
+      run: |
+        node neon/packaging/deploy/render.mjs
+        git diff --exit-code -- neon/packaging
