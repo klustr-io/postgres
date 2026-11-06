@@ -16,6 +16,19 @@ apt_snapshot() {
         -o Acquire::http::Pipeline-Depth=0 -o Acquire::https::Pipeline-Depth=0 "$@"
 }
 
+download_package() {
+    if command -v curl >/dev/null 2>&1; then
+        curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 \
+            --output "$2" "$1"
+    else
+        # Slim controller images have APT, but no curl. Bootstrap through APT's
+        # own HTTPS downloader, using the hash from the signed snapshot index.
+        /usr/lib/apt/apt-helper -o Acquire::Retries=1 \
+            -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 \
+            download-file "$1" "$2" "SHA256:$3"
+    fi
+}
+
 indexed=false
 for mirror in snapshot-cloudflare.debian.org snapshot.debian.org; do
     sed -e "s|https://snapshot-cloudflare.debian.org/|https://$mirror/|g" \
@@ -59,8 +72,7 @@ while read -r uri filename size digest; do
     temporary="/var/cache/apt/archives/partial/$filename.neon"
     verified=false
     for candidate in "$cdn" "$uri"; do
-        if curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 \
-            --output "$temporary" "$candidate" \
+        if download_package "$candidate" "$temporary" "$digest" \
             && test "$(wc -c < "$temporary")" -eq "$size" \
             && printf '%s  %s\n' "$digest" "$temporary" | sha256sum --check --status; then
             mv "$temporary" "$destination"
